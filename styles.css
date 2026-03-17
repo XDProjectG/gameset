@@ -1,0 +1,147 @@
+:root {
+  color-scheme: dark;
+  --bg: #111622;
+  --panel: rgb(20 32 48 / 72%);
+  --panel-border: rgb(125 153 196 / 45%);
+  --accent: #cf9f4a;
+  --text: #ecf2ff;
+}
+
+* {
+  box-sizing: border-box;
+  font-family: "Noto Sans TC", "PingFang TC", sans-serif;
+}
+
+body {
+  margin: 0;
+  background: radial-gradient(circle at top, #29364d, var(--bg));
+  color: var(--text);
+}
+
+.screen {
+  display: none;
+  min-height: 100vh;
+  padding: 1.5rem;
+}
+
+.screen.active {
+  display: block;
+}
+
+.panel {
+  max-width: 760px;
+  margin: 8vh auto;
+  background: rgb(27 36 52 / 90%);
+  border: 1px solid #3f516f;
+  border-radius: 14px;
+  padding: 2rem;
+  box-shadow: 0 12px 32px #0008;
+}
+
+#map-screen {
+  position: relative;
+  padding: 0;
+  overflow: hidden;
+  min-height: 100vh;
+}
+
+#world-canvas {
+  width: 100vw;
+  height: 100vh;
+  display: block;
+}
+
+.floating-panel {
+  position: absolute;
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-radius: 12px;
+  backdrop-filter: blur(5px);
+  box-shadow: 0 10px 24px #0007;
+  padding: 0.8rem;
+}
+
+.time-panel {
+  left: 1rem;
+  top: 1rem;
+  min-width: 230px;
+}
+
+.system-panel {
+  left: 1rem;
+  top: 6.5rem;
+  min-width: 340px;
+}
+
+.city-panel {
+  right: 1rem;
+  top: 1rem;
+  width: min(420px, calc(100vw - 2rem));
+  max-height: calc(100vh - 2rem);
+  overflow-y: auto;
+}
+
+h1, h2, h3, h4, p {
+  margin-top: 0;
+}
+
+.menu,
+.button-row,
+.controls {
+  display: grid;
+  gap: 0.7rem;
+}
+
+button {
+  background: rgb(31 50 76 / 85%);
+  color: var(--text);
+  border: 1px solid #6d86ac;
+  border-radius: 8px;
+  padding: 0.55rem 0.8rem;
+  cursor: pointer;
+}
+
+button.primary {
+  background: var(--accent);
+  color: #21180a;
+  font-weight: 700;
+}
+
+.stats {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.4rem;
+  margin-bottom: 0.8rem;
+}
+
+.activities,
+.office-list {
+  margin: 0 0 1rem 0;
+  padding-left: 1.1rem;
+}
+
+.controls label {
+  display: grid;
+  gap: 0.2rem;
+}
+
+dialog {
+  border: 1px solid #4b5f80;
+  border-radius: 12px;
+  background: #1b2434;
+  color: var(--text);
+}
+
+.settings-form {
+  display: grid;
+  gap: 0.8rem;
+  min-width: 260px;
+}
+
+@media (max-width: 900px) {
+  .system-panel {
+    top: auto;
+    bottom: 1rem;
+    min-width: 250px;
+  }
+}
