@@ -15,81 +15,27 @@
             東漢末年，群雄並起。你將以一州長官之身，經略城池、整頓內政、養兵治民，
             在正史《三國志》所記載的天下格局中，走出屬於你的道路。
           </p>
-          <button id="opening-continue" class="primary">點擊進入遊戲畫面</button>
+          <button id="opening-continue" class="primary">點擊進入遊戲</button>
         </div>
       </section>
 
       <section id="title-screen" class="screen">
         <div class="panel title">
           <h1>三國志：州郡經略</h1>
-          <p class="subtitle">以正史三國志為背景的 2D Canvas 策略原型</p>
+          <p class="subtitle">以正史《三國志》為背景的 2D Canvas 策略原型</p>
           <nav class="menu">
-            <button data-action="new">新遊戲</button>
-            <button data-action="load">繼續遊戲</button>
-            <button data-action="settings">環境設定</button>
+            <button data-action="new">1. 新遊戲</button>
+            <button data-action="load">2. 載入遊戲</button>
+            <button data-action="settings">3. 設定</button>
           </nav>
           <p id="menu-message" class="menu-message"></p>
         </div>
       </section>
 
       <section id="map-screen" class="screen">
-        <canvas id="world-canvas" aria-label="三國時代大地圖"></canvas>
-
-        <div class="floating-panel time-panel">
-          <h3>時間</h3>
-          <p id="game-date">建安元年（196年）春</p>
-        </div>
-
-        <div class="floating-panel system-panel">
-          <h3>系統選單</h3>
-          <div class="button-row">
-            <button id="next-season">推進一季</button>
-            <button id="save-game">儲存</button>
-            <button id="back-title">返回標題</button>
-          </div>
-        </div>
-
-        <aside class="floating-panel city-panel">
-          <h3 id="city-name">請點擊城池</h3>
-          <div id="city-overview" class="stats"></div>
-
-          <h4>民間活動</h4>
-          <ul id="city-activities" class="activities"></ul>
-
-          <h4>內府與任命</h4>
-          <div id="office-list" class="office-list"></div>
-
-          <h4>內政命令</h4>
-          <div class="controls">
-            <label>
-              稅率（%）
-              <input id="tax-rate" type="range" min="5" max="40" step="1" />
-            </label>
-            <label>
-              法律嚴格度（1-10）
-              <input id="law-level" type="range" min="1" max="10" step="1" />
-            </label>
-            <button id="recruit-btn">招募士兵（+500）</button>
-            <button id="train-btn">練兵（提升戰備）</button>
-          </div>
-        </aside>
+        <canvas id="world-canvas" aria-label="三國時代大地圖與遊戲介面"></canvas>
       </section>
     </main>
-
-    <dialog id="settings-dialog">
-      <form method="dialog" class="settings-form">
-        <h3>設定</h3>
-        <label>
-          音效音量
-          <input id="volume" type="range" min="0" max="100" value="60" />
-        </label>
-        <label>
-          介面縮放
-          <input id="scale" type="range" min="80" max="120" value="100" />
-        </label>
-        <button value="close">關閉</button>
-      </form>
-    </dialog>
 
     <script src="game.js"></script>
   </body>
