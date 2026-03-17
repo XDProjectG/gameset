@@ -10,24 +10,10 @@ const ctx = canvas.getContext("2d");
 const openingContinue = document.getElementById("opening-continue");
 const menuMessage = document.getElementById("menu-message");
 const menuButtons = document.querySelectorAll(".menu button");
-const settingsDialog = document.getElementById("settings-dialog");
-const nextSeasonBtn = document.getElementById("next-season");
-const saveBtn = document.getElementById("save-game");
-const backTitleBtn = document.getElementById("back-title");
 
-const cityName = document.getElementById("city-name");
-const cityOverview = document.getElementById("city-overview");
-const cityActivities = document.getElementById("city-activities");
-const officeList = document.getElementById("office-list");
-const gameDate = document.getElementById("game-date");
-
-const taxRate = document.getElementById("tax-rate");
-const lawLevel = document.getElementById("law-level");
-const recruitBtn = document.getElementById("recruit-btn");
-const trainBtn = document.getElementById("train-btn");
-
-const officers = ["諸葛亮", "荀彧", "周瑜", "陳群", "法正", "魯肅"];
 const seasonNames = ["春", "夏", "秋", "冬"];
+const officers = ["諸葛亮", "荀彧", "周瑜", "陳群", "法正", "魯肅"];
+const commands = ["內政", "人事", "外交", "軍事", "其他", "系統"];
 
 const citySeed = [
   { id: "luoyang", name: "洛陽", x: 0.48, y: 0.4, major: true, pop: 890000, money: 54000, grain: 69000, soldiers: 24000, geo: "平原", crop: "小麥", ruler: "曹操" },
@@ -47,18 +33,28 @@ const passes = [
   { name: "夷陵", x: 0.58, y: 0.68 },
 ];
 
+const uiLayout = {
+  cityPanel: null,
+  timePanel: null,
+  commandBlocks: [],
+  modal: null,
+  cityHit: [],
+};
+
 let state = {
   year: 196,
   season: 0,
   selectedCityId: null,
-  settings: { volume: 60, scale: 100 },
   cities: [],
+  hoverCommand: null,
+  activeModal: null,
+  modalMessage: "",
 };
 
 function switchScreen(name) {
   Object.values(screens).forEach((el) => el.classList.remove("active"));
   screens[name].classList.add("active");
-  if (name === "map") renderMapCanvas();
+  if (name === "map") renderAll();
 }
 
 function deepCloneSeed() {
@@ -78,6 +74,10 @@ function deepCloneSeed() {
   }));
 }
 
+function selectedCity() {
+  return state.cities.find((city) => city.id === state.selectedCityId) || null;
+}
+
 function formatDate() {
   return `建安${state.year - 195}年（${state.year}年）${seasonNames[state.season]}`;
 }
@@ -88,22 +88,90 @@ function cropMultiplier(city) {
   return seasonal * geoBonus;
 }
 
-function selectedCity() {
-  return state.cities.find((city) => city.id === state.selectedCityId) || null;
+function progressSeason() {
+  state.cities = state.cities.map((city) => {
+    const farmerPop = city.pop * city.workforce.farmer;
+    const grainGain = Math.round((farmerPop / 10) * cropMultiplier(city));
+    const mineAndCraft = Math.round(city.pop * city.workforce.artisan * 0.03);
+    const tradeTax = Math.round(city.money * (city.tax / 100) * 0.08);
+    const scholarshipBoost = Math.max(1, Math.round(city.pop * city.workforce.scholar * 0.00003));
+    return {
+      ...city,
+      grain: city.grain + grainGain - Math.round(city.soldiers * 0.25),
+      money: city.money + mineAndCraft + tradeTax,
+      literacy: Math.min(95, city.literacy + scholarshipBoost),
+      preparedness: Math.min(100, city.preparedness + Math.round(city.law / 2)),
+      pop: Math.max(100000, city.pop + Math.round(city.pop * 0.004) - Math.round(city.tax * 4)),
+    };
+  });
+
+  state.season += 1;
+  if (state.season > 3) {
+    state.season = 0;
+    state.year += 1;
+  }
+}
+
+function saveGame() {
+  localStorage.setItem("sgz-canvas-save", JSON.stringify(state));
+  menuMessage.textContent = "已儲存目前進度。";
+}
+
+function loadGame() {
+  const raw = localStorage.getItem("sgz-canvas-save");
+  if (!raw) {
+    menuMessage.textContent = "目前沒有存檔。";
+    return false;
+  }
+  state = JSON.parse(raw);
+  state.hoverCommand = null;
+  state.activeModal = null;
+  state.modalMessage = "";
+  return true;
+}
+
+function startNewGame() {
+  state = {
+    year: 196,
+    season: 0,
+    selectedCityId: "luoyang",
+    cities: deepCloneSeed(),
+    hoverCommand: null,
+    activeModal: null,
+    modalMessage: "",
+  };
+  switchScreen("map");
 }
 
 function resizeCanvas() {
   canvas.width = window.innerWidth;
   canvas.height = window.innerHeight;
-  renderMapCanvas();
+  renderAll();
 }
 
-function drawBackground() {
-  const gradient = ctx.createLinearGradient(0, 0, canvas.width, canvas.height);
-  gradient.addColorStop(0, "#2f4d36");
-  gradient.addColorStop(0.45, "#496447");
-  gradient.addColorStop(1, "#2f5063");
-  ctx.fillStyle = gradient;
+function fillRoundRect(x, y, w, h, r, fill, stroke = null) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  if (fill) {
+    ctx.fillStyle = fill;
+    ctx.fill();
+  }
+  if (stroke) {
+    ctx.strokeStyle = stroke;
+    ctx.stroke();
+  }
+}
+
+function drawMapBackground() {
+  const g = ctx.createLinearGradient(0, 0, canvas.width, canvas.height);
+  g.addColorStop(0, "#2f4d36");
+  g.addColorStop(0.5, "#496447");
+  g.addColorStop(1, "#2f5063");
+  ctx.fillStyle = g;
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 
   ctx.strokeStyle = "rgba(220,240,255,0.08)";
@@ -119,10 +187,8 @@ function cityToPixel(city) {
   return { x: city.x * canvas.width, y: city.y * canvas.height };
 }
 
-function renderMapCanvas() {
-  if (!screens.map.classList.contains("active")) return;
-
-  drawBackground();
+function drawCities() {
+  uiLayout.cityHit = [];
 
   passes.forEach((pass) => {
     const x = pass.x * canvas.width;
@@ -160,140 +226,242 @@ function renderMapCanvas() {
     ctx.fillStyle = "#f7fbff";
     ctx.font = "15px 'Noto Sans TC', sans-serif";
     ctx.fillText(city.name, x - 18, y + 24);
+
+    uiLayout.cityHit.push({ id: city.id, x, y, r: radius + 8 });
   });
 }
 
-function renderCityInfo(city) {
-  if (!city) {
-    cityName.textContent = "請點擊城池";
-    cityOverview.innerHTML = "";
-    cityActivities.innerHTML = "";
-    officeList.innerHTML = "";
+function drawCanvasPanels() {
+  const city = selectedCity();
+
+  const timePanel = { x: 18, y: 18, w: 250, h: 90 };
+  uiLayout.timePanel = timePanel;
+  fillRoundRect(timePanel.x, timePanel.y, timePanel.w, timePanel.h, 12, "rgba(20,32,48,0.72)", "rgba(125,153,196,0.45)");
+  ctx.fillStyle = "#ecf2ff";
+  ctx.font = "18px 'Noto Sans TC', sans-serif";
+  ctx.fillText("時間", timePanel.x + 16, timePanel.y + 28);
+  ctx.font = "16px 'Noto Sans TC', sans-serif";
+  ctx.fillText(formatDate(), timePanel.x + 16, timePanel.y + 58);
+
+  const cityPanel = { x: canvas.width - 430, y: 18, w: 412, h: canvas.height - 36 };
+  uiLayout.cityPanel = cityPanel;
+  fillRoundRect(cityPanel.x, cityPanel.y, cityPanel.w, cityPanel.h, 14, "rgba(20,32,48,0.72)", "rgba(125,153,196,0.45)");
+
+  ctx.fillStyle = "#ecf2ff";
+  ctx.font = "18px 'Noto Sans TC', sans-serif";
+  const title = city ? `${city.name}｜太守：${city.ruler}` : "請點擊城池";
+  ctx.fillText(title, cityPanel.x + 14, cityPanel.y + 28);
+
+  if (city) {
+    ctx.font = "14px 'Noto Sans TC', sans-serif";
+    const rows = [
+      `人口 ${city.pop.toLocaleString()}   士兵 ${city.soldiers.toLocaleString()}`,
+      `錢 ${city.money.toLocaleString()}   糧 ${city.grain.toLocaleString()}`,
+      `士${Math.round(city.workforce.scholar * 100)}% 農${Math.round(city.workforce.farmer * 100)}% 工${Math.round(city.workforce.artisan * 100)}% 商${Math.round(city.workforce.merchant * 100)}%`,
+      `文教 ${city.literacy}  戰備 ${city.preparedness}  稅率 ${city.tax}%  法律 ${city.law}`,
+      `文人：講學、說書、政令宣導（季增文教）`,
+      `農業：${city.geo}/${city.crop}，生產係數 ${cropMultiplier(city).toFixed(2)}`,
+      `工業：採礦、伐木、器具生產`,
+      `商業：糧材書器轉賣，商稅受稅率影響`,
+      `內府：${city.offices.map((o) => `${o.role}:${o.assigned}`).join(" / ")}`,
+    ];
+
+    let y = cityPanel.y + 54;
+    for (const row of rows) {
+      const lines = wrapText(row, cityPanel.w - 28);
+      for (const line of lines) {
+        ctx.fillText(line, cityPanel.x + 14, y);
+        y += 22;
+      }
+    }
+  }
+
+  const menuX = 18;
+  const menuY = canvas.height - 238;
+  const blockW = 118;
+  const blockH = 102;
+  const gap = 10;
+  uiLayout.commandBlocks = [];
+
+  ctx.font = "16px 'Noto Sans TC', sans-serif";
+  commands.forEach((name, idx) => {
+    const col = idx % 3;
+    const row = Math.floor(idx / 3);
+    const x = menuX + col * (blockW + gap);
+    const y = menuY + row * (blockH + gap);
+    const isHover = state.hoverCommand === name;
+    fillRoundRect(x, y, blockW, blockH, 10, isHover ? "rgba(66,96,132,0.8)" : "rgba(20,32,48,0.72)", "rgba(125,153,196,0.45)");
+    ctx.fillStyle = "#ecf2ff";
+    ctx.fillText(name, x + 36, y + 56);
+    uiLayout.commandBlocks.push({ name, x, y, w: blockW, h: blockH });
+  });
+}
+
+function drawModalIfNeeded() {
+  if (!state.activeModal) return;
+
+  ctx.fillStyle = "rgba(0,0,0,0.45)";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  const modal = {
+    x: canvas.width / 2 - 250,
+    y: canvas.height / 2 - 160,
+    w: 500,
+    h: 320,
+    close: { x: canvas.width / 2 + 210, y: canvas.height / 2 - 130, w: 24, h: 24 },
+    actions: [
+      { key: "save", label: "儲存遊戲", x: canvas.width / 2 - 180, y: canvas.height / 2 - 40, w: 360, h: 46 },
+      { key: "next", label: "推進一季", x: canvas.width / 2 - 180, y: canvas.height / 2 + 22, w: 360, h: 46 },
+      { key: "back", label: "返回主選單", x: canvas.width / 2 - 180, y: canvas.height / 2 + 84, w: 360, h: 46 },
+    ],
+  };
+  uiLayout.modal = modal;
+
+  fillRoundRect(modal.x, modal.y, modal.w, modal.h, 14, "rgba(20,32,48,0.94)", "rgba(171,195,231,0.6)");
+  ctx.fillStyle = "#ecf2ff";
+  ctx.font = "22px 'Noto Sans TC', sans-serif";
+  ctx.fillText("系統選單", modal.x + 20, modal.y + 40);
+
+  fillRoundRect(modal.close.x, modal.close.y, modal.close.w, modal.close.h, 6, "rgba(116,68,68,0.8)");
+  ctx.font = "14px 'Noto Sans TC', sans-serif";
+  ctx.fillText("X", modal.close.x + 8, modal.close.y + 17);
+
+  modal.actions.forEach((action) => {
+    fillRoundRect(action.x, action.y, action.w, action.h, 8, "rgba(39,63,92,0.88)", "rgba(171,195,231,0.45)");
+    ctx.font = "18px 'Noto Sans TC', sans-serif";
+    ctx.fillText(action.label, action.x + 130, action.y + 30);
+  });
+
+  if (state.modalMessage) {
+    ctx.font = "14px 'Noto Sans TC', sans-serif";
+    ctx.fillStyle = "#cde6ff";
+    ctx.fillText(state.modalMessage, modal.x + 20, modal.y + modal.h - 20);
+  }
+}
+
+function wrapText(text, maxWidth) {
+  const chars = [...text];
+  const lines = [];
+  let line = "";
+  for (const ch of chars) {
+    const test = line + ch;
+    if (ctx.measureText(test).width > maxWidth && line) {
+      lines.push(line);
+      line = ch;
+    } else {
+      line = test;
+    }
+  }
+  if (line) lines.push(line);
+  return lines;
+}
+
+function renderAll() {
+  if (!screens.map.classList.contains("active")) return;
+  drawMapBackground();
+  drawCities();
+  drawCanvasPanels();
+  drawModalIfNeeded();
+}
+
+function findHit(list, x, y) {
+  return list.find((item) => x >= item.x && x <= item.x + item.w && y >= item.y && y <= item.y + item.h) || null;
+}
+
+function handleCommand(name) {
+  const city = selectedCity();
+  if (name === "系統") {
+    state.activeModal = "system";
+    state.modalMessage = "";
+    renderAll();
     return;
   }
 
-  cityName.textContent = `${city.name}｜太守：${city.ruler}`;
-  cityOverview.innerHTML = [
-    `人口：${city.pop.toLocaleString()}`,
-    `錢：${city.money.toLocaleString()}`,
-    `糧：${city.grain.toLocaleString()}`,
-    `士兵：${city.soldiers.toLocaleString()}`,
-    `士：${Math.round(city.workforce.scholar * 100)}% 農：${Math.round(city.workforce.farmer * 100)}%`,
-    `工：${Math.round(city.workforce.artisan * 100)}% 商：${Math.round(city.workforce.merchant * 100)}%`,
-    `文教風氣：${city.literacy}`,
-    `戰備：${city.preparedness}`,
-  ].map((row) => `<div>${row}</div>`).join("");
-
-  cityActivities.innerHTML = "";
-  [
-    `文人活動：書院講學、說書與政令宣導，季增文教 ${Math.max(1, Math.round(city.workforce.scholar * 10))}。`,
-    `農業活動：${city.geo}地形，以${city.crop}為主，本季生產係數 ${cropMultiplier(city).toFixed(2)}。`,
-    `工業活動：採礦伐木，季增工值 ${Math.round(city.pop * city.workforce.artisan * 0.01).toLocaleString()}。`,
-    `商業活動：市集轉賣糧食、書籍、器具，稅率 ${city.tax}% 影響商稅。`,
-  ].forEach((item) => {
-    const li = document.createElement("li");
-    li.textContent = item;
-    cityActivities.appendChild(li);
-  });
-
-  officeList.innerHTML = city.offices
-    .map((office) => `<div>${office.role}（${office.duty}）：${office.assigned}</div>`)
-    .join("");
-
-  taxRate.value = city.tax;
-  lawLevel.value = city.law;
-}
-
-function applyCityPolicy(update) {
-  const city = selectedCity();
   if (!city) return;
-  Object.assign(city, update);
-  renderCityInfo(city);
+
+  if (name === "內政") {
+    city.tax = Math.min(40, city.tax + 1);
+    city.law = Math.min(10, city.law + 1);
+  } else if (name === "人事") {
+    city.literacy = Math.min(95, city.literacy + 2);
+  } else if (name === "外交") {
+    state.modalMessage = `${city.name}已派使節至鄰郡。`;
+  } else if (name === "軍事") {
+    if (city.money >= 3000 && city.pop >= 550000) {
+      city.soldiers += 500;
+      city.money -= 3000;
+      city.pop -= 500;
+    }
+  } else if (name === "其他") {
+    city.preparedness = Math.min(100, city.preparedness + 5);
+  }
+  renderAll();
 }
 
-function progressSeason() {
-  state.cities = state.cities.map((city) => {
-    const farmerPop = city.pop * city.workforce.farmer;
-    const grainGain = Math.round((farmerPop / 10) * cropMultiplier(city));
-    const mineAndCraft = Math.round(city.pop * city.workforce.artisan * 0.03);
-    const tradeTax = Math.round(city.money * (city.tax / 100) * 0.08);
-    const scholarshipBoost = Math.max(1, Math.round(city.pop * city.workforce.scholar * 0.00003));
+function handleModalClick(x, y) {
+  const modal = uiLayout.modal;
+  if (!modal) return;
 
-    return {
-      ...city,
-      grain: city.grain + grainGain - Math.round(city.soldiers * 0.25),
-      money: city.money + mineAndCraft + tradeTax,
-      literacy: Math.min(95, city.literacy + scholarshipBoost),
-      preparedness: Math.min(100, city.preparedness + Math.round(city.law / 2)),
-      pop: Math.max(100000, city.pop + Math.round(city.pop * 0.004) - Math.round(city.tax * 4)),
-    };
-  });
-
-  state.season += 1;
-  if (state.season > 3) {
-    state.season = 0;
-    state.year += 1;
+  if (findHit([modal.close], x, y)) {
+    state.activeModal = null;
+    state.modalMessage = "";
+    renderAll();
+    return;
   }
 
-  gameDate.textContent = formatDate();
-  renderCityInfo(selectedCity());
-  renderMapCanvas();
-}
+  const action = findHit(modal.actions, x, y);
+  if (!action) return;
 
-function saveGame() {
-  localStorage.setItem("sgz-proto-save", JSON.stringify(state));
-  menuMessage.textContent = "已儲存目前進度。";
-}
-
-function loadGame() {
-  const raw = localStorage.getItem("sgz-proto-save");
-  if (!raw) {
-    menuMessage.textContent = "目前沒有存檔。";
-    return false;
+  if (action.key === "save") {
+    saveGame();
+    state.modalMessage = "已儲存目前進度。";
   }
-
-  state = JSON.parse(raw);
-  gameDate.textContent = formatDate();
-  renderCityInfo(selectedCity());
-  renderMapCanvas();
-  return true;
+  if (action.key === "next") {
+    progressSeason();
+    state.modalMessage = "時間已推進一季。";
+  }
+  if (action.key === "back") {
+    state.activeModal = null;
+    switchScreen("title");
+    return;
+  }
+  renderAll();
 }
 
-function startNewGame() {
-  state = {
-    year: 196,
-    season: 0,
-    selectedCityId: "luoyang",
-    settings: state.settings,
-    cities: deepCloneSeed(),
-  };
-  gameDate.textContent = formatDate();
-  renderCityInfo(selectedCity());
-  switchScreen("map");
-}
+canvas.addEventListener("mousemove", (event) => {
+  if (!screens.map.classList.contains("active") || state.activeModal) return;
+  const rect = canvas.getBoundingClientRect();
+  const x = event.clientX - rect.left;
+  const y = event.clientY - rect.top;
+  const hit = findHit(uiLayout.commandBlocks, x, y);
+  const nextHover = hit ? hit.name : null;
+  if (nextHover !== state.hoverCommand) {
+    state.hoverCommand = nextHover;
+    renderAll();
+  }
+});
 
 canvas.addEventListener("click", (event) => {
   if (!screens.map.classList.contains("active")) return;
   const rect = canvas.getBoundingClientRect();
-  const clickX = event.clientX - rect.left;
-  const clickY = event.clientY - rect.top;
+  const x = event.clientX - rect.left;
+  const y = event.clientY - rect.top;
 
-  let nearest = null;
-  let nearestDistance = Infinity;
+  if (state.activeModal) {
+    handleModalClick(x, y);
+    return;
+  }
 
-  state.cities.forEach((city) => {
-    const { x, y } = cityToPixel(city);
-    const distance = Math.hypot(clickX - x, clickY - y);
-    if (distance < nearestDistance) {
-      nearestDistance = distance;
-      nearest = city;
-    }
-  });
+  const command = findHit(uiLayout.commandBlocks, x, y);
+  if (command) {
+    handleCommand(command.name);
+    return;
+  }
 
-  if (nearest && nearestDistance <= 20) {
-    state.selectedCityId = nearest.id;
-    renderCityInfo(nearest);
-    renderMapCanvas();
+  const cityHit = uiLayout.cityHit.find((city) => Math.hypot(x - city.x, y - city.y) <= city.r);
+  if (cityHit) {
+    state.selectedCityId = cityHit.id;
+    renderAll();
   }
 });
 
@@ -306,41 +474,15 @@ menuButtons.forEach((button) => {
       menuMessage.textContent = "";
       startNewGame();
     }
-    if (action === "load" && loadGame()) {
-      switchScreen("map");
+    if (action === "load") {
+      if (loadGame()) {
+        switchScreen("map");
+      }
     }
     if (action === "settings") {
-      settingsDialog.showModal();
+      menuMessage.textContent = "設定已併入遊戲內『系統』指令。";
     }
   });
-});
-
-nextSeasonBtn.addEventListener("click", progressSeason);
-saveBtn.addEventListener("click", saveGame);
-backTitleBtn.addEventListener("click", () => switchScreen("title"));
-
-taxRate.addEventListener("input", () => applyCityPolicy({ tax: Number(taxRate.value) }));
-lawLevel.addEventListener("input", () => applyCityPolicy({ law: Number(lawLevel.value) }));
-
-recruitBtn.addEventListener("click", () => {
-  const city = selectedCity();
-  if (!city || city.money < 3000 || city.pop < 550000) return;
-  applyCityPolicy({ soldiers: city.soldiers + 500, money: city.money - 3000, pop: city.pop - 500 });
-  renderMapCanvas();
-});
-
-trainBtn.addEventListener("click", () => {
-  const city = selectedCity();
-  if (!city || city.grain < 1800) return;
-  applyCityPolicy({ preparedness: Math.min(100, city.preparedness + 8), grain: city.grain - 1800 });
-});
-
-settingsDialog.addEventListener("close", () => {
-  state.settings = {
-    volume: Number(document.getElementById("volume").value),
-    scale: Number(document.getElementById("scale").value),
-  };
-  document.body.style.zoom = `${state.settings.scale}%`;
 });
 
 window.addEventListener("resize", resizeCanvas);
