@@ -26,17 +26,17 @@
       if (state.scene !== "opening") return;
 
       const elapsed = performance.now() - state.opening.startedAt;
-      const nextVisibleCount = Math.min(
-        [...state.opening.text].length,
-        Math.floor(elapsed / model.openingCharInterval),
-      );
+      const totalChars = [...state.opening.text].length;
+      const nextFadeProgress = Math.min(totalChars, elapsed / model.openingCharInterval);
+      const nextVisibleCount = Math.min(totalChars, Math.ceil(nextFadeProgress));
 
-      if (nextVisibleCount !== state.opening.visibleCount) {
+      if (nextFadeProgress !== state.opening.fadeProgress || nextVisibleCount !== state.opening.visibleCount) {
+        state.opening.fadeProgress = nextFadeProgress;
         state.opening.visibleCount = nextVisibleCount;
         render();
       }
 
-      if (state.opening.visibleCount >= [...state.opening.text].length) {
+      if (state.opening.fadeProgress >= totalChars) {
         if (!state.opening.completedAt) {
           state.opening.completedAt = performance.now();
           render();
@@ -63,6 +63,7 @@
       }
 
       state.opening.visibleCount = 0;
+      state.opening.fadeProgress = 0;
       state.opening.startedAt = performance.now();
       state.opening.completedAt = null;
       switchToCanvasScene("opening");

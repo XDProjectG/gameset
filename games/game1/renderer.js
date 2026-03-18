@@ -41,28 +41,44 @@
     ctx.fillStyle = "#000";
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-    const titleAlpha = Math.min(1, 0.2 + state.opening.visibleCount / 20);
-    ctx.fillStyle = `rgba(255,255,255,${titleAlpha})`;
+    const chars = [...state.opening.text];
+    const fontSize = Math.max(28, Math.min(42, canvas.height * 0.045));
+    const lineGap = fontSize * 1.15;
+    const columnGap = fontSize * 1.35;
+    const top = 72;
+    const bottom = canvas.height - 120;
+    const usableHeight = Math.max(lineGap, bottom - top);
+    const rowsPerColumn = Math.max(1, Math.floor(usableHeight / lineGap));
+    const totalColumns = Math.ceil(chars.length / rowsPerColumn);
+    const right = canvas.width - 110;
+
     ctx.textAlign = "center";
+    ctx.textBaseline = "top";
+    ctx.font = `${fontSize}px 'Noto Serif TC', 'Noto Sans TC', serif`;
+
+    chars.forEach((char, index) => {
+      const column = Math.floor(index / rowsPerColumn);
+      const row = index % rowsPerColumn;
+      const x = right - column * columnGap;
+      const y = top + row * lineGap;
+      const alpha = Math.max(0, Math.min(1, state.opening.fadeProgress - index));
+      if (alpha <= 0) return;
+
+      ctx.fillStyle = `rgba(255,255,255,${alpha})`;
+      ctx.fillText(char, x, y);
+    });
+
+    const titleAlpha = Math.min(1, 0.25 + state.opening.fadeProgress / 14);
+    ctx.fillStyle = `rgba(255,255,255,${titleAlpha})`;
     ctx.font = "28px 'Noto Serif TC', 'Noto Sans TC', serif";
-    ctx.fillText("三國志：州郡經略", canvas.width / 2, canvas.height * 0.22);
-
-    const visibleText = [...state.opening.text].slice(0, state.opening.visibleCount).join("");
-    const lines = wrapText(ctx, visibleText, Math.min(canvas.width - 120, 760));
-    ctx.font = "26px 'Noto Serif TC', 'Noto Sans TC', serif";
-    ctx.fillStyle = "rgba(255,255,255,0.94)";
-
-    let y = canvas.height * 0.36;
-    for (const line of lines) {
-      ctx.fillText(line, canvas.width / 2, y);
-      y += 40;
-    }
+    ctx.fillText("三國志：州郡經略", Math.max(120, right - totalColumns * columnGap - 100), top);
 
     ctx.font = "16px 'Noto Sans TC', sans-serif";
     ctx.fillStyle = "rgba(220,228,240,0.9)";
     const hint = state.opening.completedAt ? "任意鍵或點擊滑鼠可立即進入主畫面" : "開場白播放中，亦可按任意鍵跳過";
     ctx.fillText(hint, canvas.width / 2, canvas.height - 48);
     ctx.textAlign = "start";
+    ctx.textBaseline = "alphabetic";
   }
 
   function drawTitleScene(ctx, canvas, state, uiLayout) {
@@ -107,7 +123,8 @@
       fillRoundRect(ctx, button.x, button.y, button.w, button.h, 10, isHover ? "rgba(66,96,132,0.92)" : "rgba(31,50,76,0.85)", "rgba(109,134,172,0.88)");
       ctx.fillStyle = "#ecf2ff";
       ctx.font = "18px 'Noto Sans TC', sans-serif";
-      ctx.fillText(action.label, button.x + button.w / 2, button.y + 28);
+      ctx.textBaseline = "middle";
+      ctx.fillText(action.label, button.x + button.w / 2, button.y + button.h / 2);
       uiLayout.titleButtons.push(button);
     });
 
@@ -118,6 +135,7 @@
     }
 
     ctx.textAlign = "start";
+    ctx.textBaseline = "alphabetic";
   }
 
   function drawMapBackground(ctx, canvas) {
@@ -280,9 +298,14 @@
 
     modal.actions.forEach((action) => {
       fillRoundRect(ctx, action.x, action.y, action.w, action.h, 8, "rgba(39,63,92,0.88)", "rgba(171,195,231,0.45)");
+      ctx.fillStyle = "#ecf2ff";
       ctx.font = "18px 'Noto Sans TC', sans-serif";
-      ctx.fillText(action.label, action.x + 130, action.y + 30);
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(action.label, action.x + action.w / 2, action.y + action.h / 2);
     });
+    ctx.textAlign = "start";
+    ctx.textBaseline = "alphabetic";
 
     if (state.modalMessage) {
       ctx.font = "14px 'Noto Sans TC', sans-serif";

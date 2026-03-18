@@ -53,6 +53,7 @@
       opening: {
         text: openingText,
         visibleCount: 0,
+        fadeProgress: 0,
         startedAt: 0,
         completedAt: null,
       },
