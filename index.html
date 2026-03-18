@@ -8,27 +8,14 @@
   </head>
   <body>
     <main id="app">
-      <section id="opening-screen" class="screen active">
+      <section id="game-select-screen" class="screen active">
         <div class="panel opening">
           <h1>三國志：州郡經略</h1>
           <p>
             東漢末年，群雄並起。你將以一州長官之身，經略城池、整頓內政、養兵治民，
             在正史《三國志》所記載的天下格局中，走出屬於你的道路。
           </p>
-          <button id="opening-continue" class="primary">點擊進入遊戲</button>
-        </div>
-      </section>
-
-      <section id="title-screen" class="screen">
-        <div class="panel title">
-          <h1>三國志：州郡經略</h1>
-          <p class="subtitle">以正史《三國志》為背景的 2D Canvas 策略原型</p>
-          <nav class="menu">
-            <button data-action="new">1. 新遊戲</button>
-            <button data-action="load">2. 載入遊戲</button>
-            <button data-action="settings">3. 設定</button>
-          </nav>
-          <p id="menu-message" class="menu-message"></p>
+          <button id="launch-game" class="primary">點擊進入遊戲</button>
         </div>
       </section>
 
@@ -37,6 +24,9 @@
       </section>
     </main>
 
+    <script src="./games/game1/model.js"></script>
+    <script src="./games/game1/renderer.js"></script>
+    <script src="./games/game1/controller.js"></script>
     <script src="./games/game1/game.js"></script>
   </body>
 </html>
