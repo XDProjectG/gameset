@@ -7,6 +7,19 @@
   const DEAD_ZONE = { x: 0.22, y: 0.18 };
   const GRID_CELL_SIZE = 72;
   const RANGE_LIMIT = 4;
+  const FREE_NAV_CELL = 36;
+
+  function createClickObstacles() {
+    return [
+      { type: "rect", x: 792, y: 396, width: 360, height: 36 },
+      { type: "rect", x: 792, y: 396, width: 36, height: 324 },
+      { type: "rect", x: 1116, y: 396, width: 36, height: 324 },
+      { type: "rect", x: 792, y: 684, width: 120, height: 36 },
+      { type: "rect", x: 1032, y: 684, width: 120, height: 36 },
+      { type: "rect", x: 894, y: 504, width: 156, height: 84 },
+      { type: "circle", x: 972, y: 852, radius: 68 },
+    ];
+  }
 
   function createRoom(id, name, world, options = {}) {
     return {
@@ -19,6 +32,7 @@
       entrances: options.entrances ?? [],
       grid: options.grid ?? null,
       notes: options.notes ?? [],
+      obstacles: options.obstacles ?? [],
     };
   }
 
@@ -54,7 +68,8 @@
       movement: "free",
       clickMove: true,
       entrances: [{ x: 1360, y: 900, width: 170, height: 120, target: "hub", label: "返回展示間" }],
-      notes: ["滑鼠點擊地面後，玩家會沿合理路徑持續走向目的地。", "仍保留自由空間與平滑鏡頭。"],
+      obstacles: createClickObstacles(),
+      notes: ["滑鼠點擊地面後，玩家會繞開障礙物前往目的地。", "小房間、桌子與圓形建物都可用來測試避障。"],
     });
   }
 
@@ -64,7 +79,8 @@
       clickMove: true,
       entrances: [{ x: 1296, y: 864, width: GRID_CELL_SIZE * 2, height: GRID_CELL_SIZE * 2, target: "hub", label: "返回展示間" }],
       grid: { cellSize: GRID_CELL_SIZE },
-      notes: ["點擊任一可到達的格子後，玩家會按格子規則自動走過去。", "鍵盤按住也能持續逐格移動。"],
+      obstacles: createClickObstacles(),
+      notes: ["點擊任一可到達的格子後，玩家會按格子規則繞障礙物自動走過去。", "鍵盤按住也能持續逐格移動。"],
     });
   }
 
@@ -75,7 +91,8 @@
       rangeLimited: true,
       entrances: [{ x: 1224, y: 792, width: GRID_CELL_SIZE * 2, height: GRID_CELL_SIZE * 2, target: "hub", label: "返回展示間" }],
       grid: { cellSize: GRID_CELL_SIZE },
-      notes: ["可點擊本回合移動範圍內的格子，玩家會用格子路徑自動移動。", "移動力用完或想提前結束時，按 Space 開啟下一回合。"],
+      obstacles: createClickObstacles(),
+      notes: ["可點擊本回合剩餘移動力可抵達的格子，玩家會用格子路徑自動移動。", "移動力範圍會依目前位置與剩餘點數即時更新。"],
     });
   }
 
@@ -106,13 +123,6 @@
 
   function rectContains(rect, x, y) {
     return x >= rect.x && x <= rect.x + rect.width && y >= rect.y && y <= rect.y + rect.height;
-  }
-
-  function resolveWallCollision(pos, radius, room) {
-    return {
-      x: clamp(pos.x, ROOM_MARGIN + radius, room.world.width - ROOM_MARGIN - radius),
-      y: clamp(pos.y, ROOM_MARGIN + radius, room.world.height - ROOM_MARGIN - radius),
-    };
   }
 
   function gridMetrics(room) {
@@ -148,6 +158,36 @@
     };
   }
 
+  function pointHitsObstacle(x, y, obstacle, padding = 0) {
+    if (obstacle.type === "rect") {
+      return x >= obstacle.x - padding && x <= obstacle.x + obstacle.width + padding && y >= obstacle.y - padding && y <= obstacle.y + obstacle.height + padding;
+    }
+    return Math.hypot(x - obstacle.x, y - obstacle.y) <= obstacle.radius + padding;
+  }
+
+  function pointBlocked(room, x, y, padding = 0) {
+    if (x < ROOM_MARGIN + padding || x > room.world.width - ROOM_MARGIN - padding || y < ROOM_MARGIN + padding || y > room.world.height - ROOM_MARGIN - padding) {
+      return true;
+    }
+    return room.obstacles.some((obstacle) => pointHitsObstacle(x, y, obstacle, padding));
+  }
+
+  function resolveMovementWithObstacles(room, previous, next, radius) {
+    const bounded = {
+      x: clamp(next.x, ROOM_MARGIN + radius, room.world.width - ROOM_MARGIN - radius),
+      y: clamp(next.y, ROOM_MARGIN + radius, room.world.height - ROOM_MARGIN - radius),
+    };
+    if (!pointBlocked(room, bounded.x, bounded.y, radius)) return bounded;
+
+    const xOnly = { x: bounded.x, y: previous.y };
+    if (!pointBlocked(room, xOnly.x, xOnly.y, radius)) return xOnly;
+
+    const yOnly = { x: previous.x, y: bounded.y };
+    if (!pointBlocked(room, yOnly.x, yOnly.y, radius)) return yOnly;
+
+    return previous;
+  }
+
   function createState(canvas, rooms) {
     return {
       rooms,
@@ -167,11 +207,7 @@
       camera: { x: 0, y: 0 },
       keys: new Set(),
       previousKeys: new Set(),
-      turn: {
-        anchorX: 0,
-        anchorY: 0,
-        budget: RANGE_LIMIT,
-      },
+      turn: { budget: RANGE_LIMIT },
       pulseTime: 0,
       lastTime: 0,
       running: false,
@@ -193,8 +229,6 @@
   }
 
   function resetTurnBudget(state) {
-    state.turn.anchorX = state.player.gridX;
-    state.turn.anchorY = state.player.gridY;
     state.turn.budget = RANGE_LIMIT;
   }
 
@@ -214,19 +248,24 @@
     const room = state.rooms[roomId];
     const x = spawn?.x ?? room.world.width / 2;
     const y = spawn?.y ?? room.world.height / 2;
-    const pos = resolveWallCollision({ x, y }, state.player.radius, room);
     resetMotionState(state);
-    state.player.x = pos.x;
-    state.player.y = pos.y;
-    syncGridPosition(state, room);
-    if (!room.rangeLimited) state.turn.budget = RANGE_LIMIT;
 
+    if (room.movement === "grid") {
+      const snapped = toGridPoint(room, x, y);
+      if (!pointBlocked(room, snapped.x, snapped.y, state.player.radius)) {
+        state.player.x = snapped.x;
+        state.player.y = snapped.y;
+        syncGridPosition(state, room);
+      }
+    } else {
+      const resolved = resolveMovementWithObstacles(room, { x, y }, { x, y }, state.player.radius);
+      state.player.x = resolved.x;
+      state.player.y = resolved.y;
+    }
+
+    if (!room.rangeLimited) state.turn.budget = RANGE_LIMIT;
     state.camera.x = clamp(state.player.x - state.canvas.width / 2, 0, Math.max(0, room.world.width - state.canvas.width));
     state.camera.y = clamp(state.player.y - state.canvas.height / 2, 0, Math.max(0, room.world.height - state.canvas.height));
-  }
-
-  function justPressed(state, key) {
-    return state.keys.has(key) && !state.previousKeys.has(key);
   }
 
   function primaryDirection(state) {
@@ -244,30 +283,123 @@
     return { x: horizontal, y: vertical };
   }
 
-  function withinRange(state, gridX, gridY) {
-    return Math.abs(gridX - state.turn.anchorX) + Math.abs(gridY - state.turn.anchorY) <= RANGE_LIMIT;
+  function reachableCells(room, state) {
+    if (!room.rangeLimited) return null;
+    const metrics = gridMetrics(room);
+    const visited = new Map();
+    const queue = [{ x: state.player.gridX, y: state.player.gridY, cost: 0 }];
+    visited.set(`${state.player.gridX},${state.player.gridY}`, 0);
+
+    while (queue.length > 0) {
+      const current = queue.shift();
+      const neighbors = [
+        { x: current.x + 1, y: current.y },
+        { x: current.x - 1, y: current.y },
+        { x: current.x, y: current.y + 1 },
+        { x: current.x, y: current.y - 1 },
+      ];
+      neighbors.forEach((next) => {
+        if (next.x < 0 || next.y < 0 || next.x >= metrics.columns || next.y >= metrics.rows) return;
+        const nextCost = current.cost + 1;
+        const key = `${next.x},${next.y}`;
+        const world = gridToWorld(room, next.x, next.y);
+        if (nextCost > state.turn.budget || pointBlocked(room, world.x, world.y, state.player.radius)) return;
+        if (visited.has(key) && visited.get(key) <= nextCost) return;
+        visited.set(key, nextCost);
+        queue.push({ x: next.x, y: next.y, cost: nextCost });
+      });
+    }
+
+    return visited;
   }
 
-  function buildManhattanPath(fromX, fromY, toX, toY) {
-    const steps = [];
-    let x = fromX;
-    let y = fromY;
-    while (x !== toX) {
-      x += x < toX ? 1 : -1;
-      steps.push({ gridX: x, gridY: y });
+  function canReachRangeCell(room, state, gridX, gridY) {
+    const reachable = reachableCells(room, state);
+    return reachable?.has(`${gridX},${gridY}`) ?? false;
+  }
+
+  function buildGridPath(room, fromX, fromY, toX, toY) {
+    const metrics = gridMetrics(room);
+    const startKey = `${fromX},${fromY}`;
+    const goalKey = `${toX},${toY}`;
+    const queue = [{ x: fromX, y: fromY }];
+    const cameFrom = new Map([[startKey, null]]);
+
+    while (queue.length > 0) {
+      const current = queue.shift();
+      if (`${current.x},${current.y}` === goalKey) break;
+      const neighbors = [
+        { x: current.x + 1, y: current.y },
+        { x: current.x - 1, y: current.y },
+        { x: current.x, y: current.y + 1 },
+        { x: current.x, y: current.y - 1 },
+      ];
+      neighbors.forEach((next) => {
+        if (next.x < 0 || next.y < 0 || next.x >= metrics.columns || next.y >= metrics.rows) return;
+        const key = `${next.x},${next.y}`;
+        const world = gridToWorld(room, next.x, next.y);
+        if (cameFrom.has(key) || pointBlocked(room, world.x, world.y, PLAYER_RADIUS)) return;
+        cameFrom.set(key, current);
+        queue.push(next);
+      });
     }
-    while (y !== toY) {
-      y += y < toY ? 1 : -1;
-      steps.push({ gridX: x, gridY: y });
+
+    if (!cameFrom.has(goalKey)) return [];
+    const path = [];
+    let cursor = { x: toX, y: toY };
+    while (`${cursor.x},${cursor.y}` !== startKey) {
+      path.unshift({ gridX: cursor.x, gridY: cursor.y });
+      cursor = cameFrom.get(`${cursor.x},${cursor.y}`);
     }
-    return steps;
+    return path;
+  }
+
+  function buildFreePath(room, fromX, fromY, toX, toY) {
+    const columns = Math.floor(room.world.width / FREE_NAV_CELL);
+    const rows = Math.floor(room.world.height / FREE_NAV_CELL);
+    const start = { x: clamp(Math.round(fromX / FREE_NAV_CELL), 0, columns - 1), y: clamp(Math.round(fromY / FREE_NAV_CELL), 0, rows - 1) };
+    const goal = { x: clamp(Math.round(toX / FREE_NAV_CELL), 0, columns - 1), y: clamp(Math.round(toY / FREE_NAV_CELL), 0, rows - 1) };
+    const startKey = `${start.x},${start.y}`;
+    const goalKey = `${goal.x},${goal.y}`;
+    const queue = [start];
+    const cameFrom = new Map([[startKey, null]]);
+    const dirs = [
+      { x: 1, y: 0 }, { x: -1, y: 0 }, { x: 0, y: 1 }, { x: 0, y: -1 },
+      { x: 1, y: 1 }, { x: 1, y: -1 }, { x: -1, y: 1 }, { x: -1, y: -1 },
+    ];
+
+    while (queue.length > 0) {
+      const current = queue.shift();
+      if (`${current.x},${current.y}` === goalKey) break;
+      dirs.forEach((dir) => {
+        const next = { x: current.x + dir.x, y: current.y + dir.y };
+        if (next.x < 0 || next.y < 0 || next.x >= columns || next.y >= rows) return;
+        const key = `${next.x},${next.y}`;
+        const wx = next.x * FREE_NAV_CELL;
+        const wy = next.y * FREE_NAV_CELL;
+        if (cameFrom.has(key) || pointBlocked(room, wx, wy, PLAYER_RADIUS + 4)) return;
+        cameFrom.set(key, current);
+        queue.push(next);
+      });
+    }
+
+    if (!cameFrom.has(goalKey)) return [];
+    const path = [];
+    let cursor = goal;
+    while (`${cursor.x},${cursor.y}` !== startKey) {
+      path.unshift({ x: cursor.x * FREE_NAV_CELL, y: cursor.y * FREE_NAV_CELL });
+      cursor = cameFrom.get(`${cursor.x},${cursor.y}`);
+    }
+    path.push({ x: toX, y: toY });
+    return path;
   }
 
   function startGridStep(state, room, nextGridX, nextGridY) {
-    if (room.rangeLimited && !withinRange(state, nextGridX, nextGridY)) return false;
+    const target = gridToWorld(room, nextGridX, nextGridY);
+    if (pointBlocked(room, target.x, target.y, state.player.radius)) return false;
+    if (room.rangeLimited && !canReachRangeCell(room, state, nextGridX, nextGridY)) return false;
     if (nextGridX === state.player.gridX && nextGridY === state.player.gridY) return false;
 
-    const target = gridToWorld(room, nextGridX, nextGridY);
     state.player.moveFrom = { x: state.player.x, y: state.player.y, gridX: state.player.gridX, gridY: state.player.gridY };
     state.player.moveTo = target;
     state.player.moveProgress = 0;
@@ -282,15 +414,12 @@
       if (distance < 1) {
         state.player.x = state.player.clickTarget.x;
         state.player.y = state.player.clickTarget.y;
-        state.player.clickTarget = null;
+        state.player.clickTarget = state.player.pathQueue.shift() ?? null;
         return;
       }
       const step = Math.min(distance, PLAYER_SPEED * dt);
-      const next = {
-        x: state.player.x + (dx / distance) * step,
-        y: state.player.y + (dy / distance) * step,
-      };
-      const resolved = resolveWallCollision(next, state.player.radius, room);
+      const next = { x: state.player.x + (dx / distance) * step, y: state.player.y + (dy / distance) * step };
+      const resolved = resolveMovementWithObstacles(room, { x: state.player.x, y: state.player.y }, next, state.player.radius);
       state.player.x = resolved.x;
       state.player.y = resolved.y;
       return;
@@ -299,11 +428,8 @@
     const direction = freeDirection(state);
     if (!direction) return;
     const length = Math.hypot(direction.x, direction.y) || 1;
-    const next = {
-      x: state.player.x + (direction.x / length) * PLAYER_SPEED * dt,
-      y: state.player.y + (direction.y / length) * PLAYER_SPEED * dt,
-    };
-    const resolved = resolveWallCollision(next, state.player.radius, room);
+    const next = { x: state.player.x + (direction.x / length) * PLAYER_SPEED * dt, y: state.player.y + (direction.y / length) * PLAYER_SPEED * dt };
+    const resolved = resolveMovementWithObstacles(room, { x: state.player.x, y: state.player.y }, next, state.player.radius);
     state.player.x = resolved.x;
     state.player.y = resolved.y;
   }
@@ -322,21 +448,19 @@
         state.player.moveFrom = null;
         state.player.moveTo = null;
         state.player.moveProgress = 0;
+        if (room.rangeLimited) state.turn.budget = Math.max(0, state.turn.budget - 1);
       }
       return;
     }
 
     if (state.player.pathQueue.length > 0) {
       const next = state.player.pathQueue.shift();
-      if (!startGridStep(state, room, next.gridX, next.gridY)) {
-        state.player.pathQueue = [];
-      }
+      if (!startGridStep(state, room, next.gridX, next.gridY)) state.player.pathQueue = [];
       return;
     }
 
     const direction = primaryDirection(state);
     if (!direction) return;
-
     const metrics = gridMetrics(room);
     const nextGridX = clamp(state.player.gridX + direction.x, 0, Math.max(0, metrics.columns - 1));
     const nextGridY = clamp(state.player.gridY + direction.y, 0, Math.max(0, metrics.rows - 1));
@@ -345,11 +469,8 @@
 
   function updatePlayer(state, dt) {
     const room = state.rooms[state.currentRoomId];
-    if (room.movement === "grid") {
-      updateGridPlayer(state, room, dt);
-    } else {
-      updateFreePlayer(state, room, dt);
-    }
+    if (room.movement === "grid") updateGridPlayer(state, room, dt);
+    else updateFreePlayer(state, room, dt);
   }
 
   function updateCamera(state) {
@@ -358,7 +479,6 @@
     const viewHalfH = state.canvas.height / 2;
     const deadHalfW = state.canvas.width * DEAD_ZONE.x / 2;
     const deadHalfH = state.canvas.height * DEAD_ZONE.y / 2;
-
     let targetX = state.camera.x;
     let targetY = state.camera.y;
     const playerScreenX = state.player.x - state.camera.x;
@@ -366,7 +486,6 @@
 
     if (playerScreenX < viewHalfW - deadHalfW) targetX = state.player.x - (viewHalfW - deadHalfW);
     else if (playerScreenX > viewHalfW + deadHalfW) targetX = state.player.x - (viewHalfW + deadHalfW);
-
     if (playerScreenY < viewHalfH - deadHalfH) targetY = state.player.y - (viewHalfH - deadHalfH);
     else if (playerScreenY > viewHalfH + deadHalfH) targetY = state.player.y - (viewHalfH + deadHalfH);
 
@@ -376,21 +495,35 @@
     state.camera.y += (targetY - state.camera.y) * CAMERA_LERP;
   }
 
+  function drawObstacles(ctx, room) {
+    room.obstacles.forEach((obstacle) => {
+      if (obstacle.type === "rect") {
+        const isWall = obstacle.width < 50 || obstacle.height < 50;
+        ctx.fillStyle = isWall ? "#6c5941" : "#7f633f";
+        ctx.fillRect(obstacle.x, obstacle.y, obstacle.width, obstacle.height);
+      } else {
+        ctx.fillStyle = "#5c6a7d";
+        ctx.beginPath();
+        ctx.arc(obstacle.x, obstacle.y, obstacle.radius, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    });
+  }
+
   function drawGridOverlay(ctx, room, state) {
     if (room.movement !== "grid") return;
     const metrics = gridMetrics(room);
+    const reachable = room.rangeLimited ? reachableCells(room, state) : null;
 
-    if (room.rangeLimited) {
-      const pulse = 0.32 + (Math.sin(state.pulseTime * 3) + 1) * 0.18;
-      for (let y = 0; y < metrics.rows; y += 1) {
-        for (let x = 0; x < metrics.columns; x += 1) {
-          if (!withinRange(state, x, y)) continue;
-          const wx = ROOM_MARGIN + x * metrics.cellSize;
-          const wy = ROOM_MARGIN + y * metrics.cellSize;
-          ctx.fillStyle = `rgba(121, 188, 255, ${pulse})`;
-          ctx.fillRect(wx, wy, metrics.cellSize, metrics.cellSize);
-        }
-      }
+    if (reachable) {
+      const pulse = 0.28 + (Math.sin(state.pulseTime * 3) + 1) * 0.18;
+      reachable.forEach((_, key) => {
+        const [x, y] = key.split(",").map(Number);
+        const wx = ROOM_MARGIN + x * metrics.cellSize;
+        const wy = ROOM_MARGIN + y * metrics.cellSize;
+        ctx.fillStyle = `rgba(121, 188, 255, ${pulse})`;
+        ctx.fillRect(wx, wy, metrics.cellSize, metrics.cellSize);
+      });
     }
 
     ctx.strokeStyle = "rgba(220,235,255,0.18)";
@@ -431,7 +564,6 @@
   function drawRoom(ctx, canvas, state) {
     const room = state.rooms[state.currentRoomId];
     const camera = state.camera;
-
     ctx.fillStyle = "#0b1220";
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
@@ -461,6 +593,7 @@
       }
     }
 
+    drawObstacles(ctx, room);
     drawEntrances(ctx, state, room);
 
     ctx.fillStyle = room.rangeLimited ? "#9cd0ff" : room.movement === "grid" ? "#8ff0c4" : "#f3d37c";
@@ -481,9 +614,9 @@
     ctx.setLineDash([]);
 
     ctx.fillStyle = "rgba(12,19,29,0.76)";
-    ctx.fillRect(18, 18, 500, room.rangeLimited ? 176 : 152);
+    ctx.fillRect(18, 18, 540, room.rangeLimited ? 176 : 152);
     ctx.strokeStyle = "rgba(175,198,231,0.4)";
-    ctx.strokeRect(18, 18, 500, room.rangeLimited ? 176 : 152);
+    ctx.strokeRect(18, 18, 540, room.rangeLimited ? 176 : 152);
     ctx.fillStyle = "#ecf2ff";
     ctx.textAlign = "start";
     ctx.textBaseline = "alphabetic";
@@ -491,7 +624,6 @@
     ctx.fillText(room.name, 36, 52);
     ctx.font = "15px 'Noto Sans TC', sans-serif";
     ctx.fillStyle = "#c7d9f8";
-
     const controlLine = room.movement === "free"
       ? room.clickMove ? "滑鼠點擊地面 / 方向鍵移動，Backspace 退出展示間" : "WASD / 方向鍵移動，Backspace 退出展示間"
       : room.clickMove ? "滑鼠點擊或按住方向鍵移動，Space 結束回合，Backspace 退出" : "按住方向鍵 / WASD 持續逐格移動，Backspace 退出展示間";
@@ -517,10 +649,7 @@
 
   function canvasToWorld(state, clientX, clientY) {
     const rect = state.canvas.getBoundingClientRect();
-    return {
-      x: clientX - rect.left + state.camera.x,
-      y: clientY - rect.top + state.camera.y,
-    };
+    return { x: clientX - rect.left + state.camera.x, y: clientY - rect.top + state.camera.y };
   }
 
   function handleCanvasClick(state, event) {
@@ -529,16 +658,23 @@
     const point = canvasToWorld(state, event.clientX, event.clientY);
 
     if (room.movement === "free") {
-      const target = resolveWallCollision(point, state.player.radius, room);
-      state.player.clickTarget = target;
-      state.player.pathQueue = [];
+      const target = resolveMovementWithObstacles(room, { x: point.x, y: point.y }, point, state.player.radius);
+      const path = buildFreePath(room, state.player.x, state.player.y, target.x, target.y);
+      if (path.length === 0) return;
+      state.player.clickTarget = path.shift() ?? null;
+      state.player.pathQueue = path;
       return;
     }
 
     const snapped = toGridPoint(room, point.x, point.y);
-    if (room.rangeLimited && !withinRange(state, snapped.gridX, snapped.gridY)) return;
-    const path = buildManhattanPath(state.player.gridX, state.player.gridY, snapped.gridX, snapped.gridY);
-    if (room.rangeLimited && path.length > state.turn.budget) return;
+    if (pointBlocked(room, snapped.x, snapped.y, state.player.radius)) return;
+    const path = buildGridPath(room, state.player.gridX, state.player.gridY, snapped.gridX, snapped.gridY);
+    if (path.length === 0 && (snapped.gridX !== state.player.gridX || snapped.gridY !== state.player.gridY)) return;
+    if (room.rangeLimited) {
+      const reachable = reachableCells(room, state);
+      if (!reachable.has(`${snapped.gridX},${snapped.gridY}`)) return;
+      if (path.length > state.turn.budget) return;
+    }
     state.player.pathQueue = path;
     state.player.clickTarget = null;
   }
@@ -563,14 +699,6 @@
       state.lastTime = timestamp;
       state.pulseTime += dt;
       updatePlayer(state, dt);
-
-      const room = state.rooms[state.currentRoomId];
-      if (room.rangeLimited && state.player.moveFrom && !state.player.moveTo) {
-        state.turn.budget = Math.max(0, RANGE_LIMIT - (Math.abs(state.player.gridX - state.turn.anchorX) + Math.abs(state.player.gridY - state.turn.anchorY)));
-      } else if (room.rangeLimited && !state.player.moveTo) {
-        state.turn.budget = Math.max(0, RANGE_LIMIT - (Math.abs(state.player.gridX - state.turn.anchorX) + Math.abs(state.player.gridY - state.turn.anchorY)));
-      }
-
       updateCamera(state);
       tryTransitions(state);
       drawRoom(state.canvas.getContext("2d"), state.canvas, state);
@@ -611,7 +739,7 @@
           }
           return;
         }
-        clearAutoMove(state);
+        if (state.rooms[state.currentRoomId].clickMove) clearAutoMove(state);
         state.keys.add(key);
       };
 
