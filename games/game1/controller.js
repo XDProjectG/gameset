@@ -1,5 +1,5 @@
 (() => {
-  function createController({ screens, canvas, state, uiLayout, render }) {
+  function createController({ screens, canvas, state, uiLayout, render, isEnabled }) {
     const model = window.SGZModel;
     const renderer = window.SGZRenderer;
     let openingTimerId = null;
@@ -12,18 +12,13 @@
     }
 
     function switchToCanvasScene(scene) {
-      if (scene === "selection") {
-        state.scene = "opening";
-        showDomScreen("selection");
-        return;
-      }
       showDomScreen("map");
       state.scene = scene;
       render();
     }
 
     function updateOpeningFrame() {
-      if (state.scene !== "opening") return;
+      if (state.scene !== "opening" || !isEnabled()) return;
 
       const elapsed = performance.now() - state.opening.startedAt;
       const totalChars = [...state.opening.text].length;
@@ -82,6 +77,21 @@
       state.hoverTitleAction = null;
       state.titleMessage = "";
       switchToCanvasScene("title");
+    }
+
+    function stop() {
+      if (openingTimerId) {
+        window.clearTimeout(openingTimerId);
+        openingTimerId = null;
+      }
+      if (animationFrameId) {
+        window.cancelAnimationFrame(animationFrameId);
+        animationFrameId = null;
+      }
+      state.activeModal = null;
+      state.modalMessage = "";
+      state.hoverCommand = null;
+      state.hoverTitleAction = null;
     }
 
     function startNewGame() {
@@ -178,7 +188,7 @@
     }
 
     function handlePointerMove(event) {
-      if (screens.map.classList.contains("active") === false) return;
+      if (!isEnabled() || !screens.map.classList.contains("active")) return;
       const { x, y } = getCanvasPoint(event);
 
       if (state.scene === "title") {
@@ -201,7 +211,7 @@
     }
 
     function handleCanvasClick(event) {
-      if (!screens.map.classList.contains("active")) return;
+      if (!isEnabled() || !screens.map.classList.contains("active")) return;
       const { x, y } = getCanvasPoint(event);
 
       if (state.scene === "opening") {
@@ -234,6 +244,7 @@
     }
 
     function handleKeydown() {
+      if (!isEnabled()) return;
       if (state.scene === "opening") {
         goToTitle();
       }
@@ -242,11 +253,10 @@
     function resizeCanvas() {
       canvas.width = window.innerWidth;
       canvas.height = window.innerHeight;
-      render();
+      if (isEnabled()) render();
     }
 
-    function bindEvents(launchButton) {
-      launchButton.addEventListener("click", startOpeningSequence);
+    function bindEvents() {
       canvas.addEventListener("mousemove", handlePointerMove);
       canvas.addEventListener("click", handleCanvasClick);
       window.addEventListener("keydown", handleKeydown);
@@ -257,6 +267,8 @@
       bindEvents,
       resizeCanvas,
       showDomScreen,
+      startOpeningSequence,
+      stop,
     };
   }
 

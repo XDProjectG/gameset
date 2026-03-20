@@ -10,12 +10,15 @@
     <main id="app">
       <section id="game-select-screen" class="screen active">
         <div class="panel opening">
-          <h1>三國志：州郡經略</h1>
+          <h1>遊戲庫入口</h1>
           <p>
-            東漢末年，群雄並起。你將以一州長官之身，經略城池、整頓內政、養兵治民，
-            在正史《三國志》所記載的天下格局中，走出屬於你的道路。
+            這裡同時提供正式遊戲與遊戲機制展示間。你可以進入《三國志：州郡經略》，
+            也可以先到展示間中體驗與測試獨立機制組件。
           </p>
-          <button id="launch-game" class="primary">點擊進入遊戲</button>
+          <div class="menu">
+            <button id="launch-game" class="primary">進入三國志：州郡經略</button>
+            <button id="launch-demo">進入遊戲機制展示間</button>
+          </div>
         </div>
       </section>
 
@@ -24,6 +27,7 @@
       </section>
     </main>
 
+    <script src="./system/demo.js"></script>
     <script src="./games/game1/model.js"></script>
     <script src="./games/game1/renderer.js"></script>
     <script src="./games/game1/controller.js"></script>
