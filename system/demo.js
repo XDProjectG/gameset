@@ -11,13 +11,13 @@
 
   function createClickObstacles() {
     return [
-      { type: "rect", x: 792, y: 396, width: 360, height: 36 },
-      { type: "rect", x: 792, y: 396, width: 36, height: 324 },
-      { type: "rect", x: 1116, y: 396, width: 36, height: 324 },
-      { type: "rect", x: 792, y: 684, width: 120, height: 36 },
-      { type: "rect", x: 1032, y: 684, width: 120, height: 36 },
-      { type: "rect", x: 894, y: 504, width: 156, height: 84 },
-      { type: "circle", x: 972, y: 852, radius: 68 },
+      { type: "rect", x: 784, y: 352, width: 432, height: 72 },
+      { type: "rect", x: 784, y: 352, width: 72, height: 360 },
+      { type: "rect", x: 1144, y: 352, width: 72, height: 360 },
+      { type: "rect", x: 784, y: 640, width: 144, height: 72 },
+      { type: "rect", x: 1072, y: 640, width: 144, height: 72 },
+      { type: "rect", x: 928, y: 496, width: 144, height: 72 },
+      { type: "circle", x: 1000, y: 856, radius: 54 },
     ];
   }
 
@@ -92,7 +92,7 @@
       entrances: [{ x: 1224, y: 792, width: GRID_CELL_SIZE * 2, height: GRID_CELL_SIZE * 2, target: "hub", label: "返回展示間" }],
       grid: { cellSize: GRID_CELL_SIZE },
       obstacles: createClickObstacles(),
-      notes: ["可點擊本回合剩餘移動力可抵達的格子，玩家會用格子路徑自動移動。", "移動力範圍會依目前位置與剩餘點數即時更新。"],
+      notes: ["可點擊本次移動起點 4 格範圍內的格子，玩家會用格子路徑自動移動。", "按 Space 後才會把目前位置登記成新的移動起點。"],
     });
   }
 
@@ -207,7 +207,7 @@
       camera: { x: 0, y: 0 },
       keys: new Set(),
       previousKeys: new Set(),
-      turn: { budget: RANGE_LIMIT },
+      turn: { budget: RANGE_LIMIT, originX: 0, originY: 0 },
       pulseTime: 0,
       lastTime: 0,
       running: false,
@@ -230,6 +230,8 @@
 
   function resetTurnBudget(state) {
     state.turn.budget = RANGE_LIMIT;
+    state.turn.originX = state.player.gridX;
+    state.turn.originY = state.player.gridY;
   }
 
   function syncGridPosition(state, room) {
@@ -287,8 +289,8 @@
     if (!room.rangeLimited) return null;
     const metrics = gridMetrics(room);
     const visited = new Map();
-    const queue = [{ x: state.player.gridX, y: state.player.gridY, cost: 0 }];
-    visited.set(`${state.player.gridX},${state.player.gridY}`, 0);
+    const queue = [{ x: state.turn.originX, y: state.turn.originY, cost: 0 }];
+    visited.set(`${state.turn.originX},${state.turn.originY}`, 0);
 
     while (queue.length > 0) {
       const current = queue.shift();
@@ -448,7 +450,7 @@
         state.player.moveFrom = null;
         state.player.moveTo = null;
         state.player.moveProgress = 0;
-        if (room.rangeLimited) state.turn.budget = Math.max(0, state.turn.budget - 1);
+        if (room.rangeLimited) state.turn.budget = RANGE_LIMIT;
       }
       return;
     }
@@ -630,7 +632,7 @@
     ctx.fillText(controlLine, 36, 82);
     room.notes.forEach((line, index) => ctx.fillText(line, 36, 108 + index * 22));
     if (room.movement === "grid") ctx.fillText(`目前格位：(${state.player.gridX}, ${state.player.gridY})`, 36, room.rangeLimited ? 152 : 130);
-    if (room.rangeLimited) ctx.fillText(`剩餘移動力：${state.turn.budget}`, 36, 174);
+    if (room.rangeLimited) ctx.fillText(`本次移動起點：(${state.turn.originX}, ${state.turn.originY})｜移動力上限 ${state.turn.budget}`, 36, 174);
   }
 
   function computeSpawn(targetRoom) {
