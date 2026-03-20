@@ -185,6 +185,13 @@
     state.player.clickTarget = null;
   }
 
+  function resetMotionState(state) {
+    state.player.moveFrom = null;
+    state.player.moveTo = null;
+    state.player.moveProgress = 0;
+    clearAutoMove(state);
+  }
+
   function resetTurnBudget(state) {
     state.turn.anchorX = state.player.gridX;
     state.turn.anchorY = state.player.gridY;
@@ -198,10 +205,7 @@
     state.player.gridY = snapped.gridY;
     state.player.x = snapped.x;
     state.player.y = snapped.y;
-    state.player.moveFrom = null;
-    state.player.moveTo = null;
-    state.player.moveProgress = 0;
-    clearAutoMove(state);
+    resetMotionState(state);
     if (room.rangeLimited) resetTurnBudget(state);
   }
 
@@ -211,6 +215,7 @@
     const x = spawn?.x ?? room.world.width / 2;
     const y = spawn?.y ?? room.world.height / 2;
     const pos = resolveWallCollision({ x, y }, state.player.radius, room);
+    resetMotionState(state);
     state.player.x = pos.x;
     state.player.y = pos.y;
     syncGridPosition(state, room);
@@ -230,6 +235,13 @@
     if (state.keys.has("ArrowUp") || state.keys.has("w")) return { x: 0, y: -1 };
     if (state.keys.has("ArrowDown") || state.keys.has("s")) return { x: 0, y: 1 };
     return null;
+  }
+
+  function freeDirection(state) {
+    const horizontal = (state.keys.has("ArrowRight") || state.keys.has("d") ? 1 : 0) - (state.keys.has("ArrowLeft") || state.keys.has("a") ? 1 : 0);
+    const vertical = (state.keys.has("ArrowDown") || state.keys.has("s") ? 1 : 0) - (state.keys.has("ArrowUp") || state.keys.has("w") ? 1 : 0);
+    if (horizontal === 0 && vertical === 0) return null;
+    return { x: horizontal, y: vertical };
   }
 
   function withinRange(state, gridX, gridY) {
@@ -284,11 +296,12 @@
       return;
     }
 
-    const direction = primaryDirection(state);
+    const direction = freeDirection(state);
     if (!direction) return;
+    const length = Math.hypot(direction.x, direction.y) || 1;
     const next = {
-      x: state.player.x + direction.x * PLAYER_SPEED * dt,
-      y: state.player.y + direction.y * PLAYER_SPEED * dt,
+      x: state.player.x + (direction.x / length) * PLAYER_SPEED * dt,
+      y: state.player.y + (direction.y / length) * PLAYER_SPEED * dt,
     };
     const resolved = resolveWallCollision(next, state.player.radius, room);
     state.player.x = resolved.x;
