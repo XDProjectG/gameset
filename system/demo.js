@@ -320,7 +320,7 @@
     return reachable?.has(`${gridX},${gridY}`) ?? false;
   }
 
-  function buildGridPath(room, fromX, fromY, toX, toY) {
+  function buildGridPath(room, fromX, fromY, toX, toY, allowedSet = null) {
     const metrics = gridMetrics(room);
     const startKey = `${fromX},${fromY}`;
     const goalKey = `${toX},${toY}`;
@@ -341,6 +341,7 @@
         const key = `${next.x},${next.y}`;
         const world = gridToWorld(room, next.x, next.y);
         if (cameFrom.has(key) || pointBlocked(room, world.x, world.y, PLAYER_RADIUS)) return;
+        if (allowedSet && !allowedSet.has(key)) return;
         cameFrom.set(key, current);
         queue.push(next);
       });
@@ -670,13 +671,10 @@
 
     const snapped = toGridPoint(room, point.x, point.y);
     if (pointBlocked(room, snapped.x, snapped.y, state.player.radius)) return;
-    const path = buildGridPath(room, state.player.gridX, state.player.gridY, snapped.gridX, snapped.gridY);
+    const reachable = room.rangeLimited ? reachableCells(room, state) : null;
+    if (room.rangeLimited && !reachable.has(`${snapped.gridX},${snapped.gridY}`)) return;
+    const path = buildGridPath(room, state.player.gridX, state.player.gridY, snapped.gridX, snapped.gridY, reachable);
     if (path.length === 0 && (snapped.gridX !== state.player.gridX || snapped.gridY !== state.player.gridY)) return;
-    if (room.rangeLimited) {
-      const reachable = reachableCells(room, state);
-      if (!reachable.has(`${snapped.gridX},${snapped.gridY}`)) return;
-      if (path.length > state.turn.budget) return;
-    }
     state.player.pathQueue = path;
     state.player.clickTarget = null;
   }
