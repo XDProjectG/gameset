@@ -29,6 +29,7 @@
       movement: options.movement ?? "free",
       clickMove: options.clickMove ?? false,
       rangeLimited: options.rangeLimited ?? false,
+      previewMove: options.previewMove ?? null,
       entrances: options.entrances ?? [],
       grid: options.grid ?? null,
       notes: options.notes ?? [],
@@ -533,6 +534,7 @@
         state.player.moveTo = null;
         state.player.moveProgress = 0;
         if (room.rangeLimited) state.turn.budget = RANGE_LIMIT;
+        if (room.previewMove && state.player.pathQueue.length === 0) resetTurnBudget(state);
       }
       return;
     }
@@ -648,16 +650,9 @@
   }
 
   function drawPreviewPath(ctx, room, state) {
-    if (!room.previewMove) return;
-    const visiblePath = state.player.previewPath.length > 0
-      ? state.player.previewPath
-      : [
-        ...(state.player.moveTo ? [{ gridX: state.player.moveTo.gridX, gridY: state.player.moveTo.gridY }] : []),
-        ...state.player.pathQueue,
-      ];
-    if (visiblePath.length === 0) return;
-    const points = [{ x: state.player.x, y: state.player.y }, ...visiblePath.map((step) => gridToWorld(room, step.gridX, step.gridY))];
-    ctx.strokeStyle = "rgba(255, 216, 97, 0.9)";
+    if (!room.previewMove || state.player.previewPath.length === 0) return;
+    const points = [{ x: state.player.x, y: state.player.y }, ...state.player.previewPath.map((step) => gridToWorld(room, step.gridX, step.gridY))];
+    ctx.strokeStyle = "rgba(123, 207, 255, 0.9)";
     ctx.lineWidth = 8;
     ctx.lineJoin = "round";
     ctx.lineCap = "round";
@@ -666,7 +661,7 @@
     for (let index = 1; index < points.length; index += 1) ctx.lineTo(points[index].x, points[index].y);
     ctx.stroke();
 
-    ctx.fillStyle = "rgba(255, 216, 97, 0.24)";
+    ctx.fillStyle = "rgba(123, 207, 255, 0.26)";
     points.slice(1).forEach((point) => {
       ctx.beginPath();
       ctx.arc(point.x, point.y, 12, 0, Math.PI * 2);
@@ -679,7 +674,7 @@
     ctx.save();
     ctx.translate(end.x, end.y);
     ctx.rotate(angle);
-    ctx.fillStyle = "#ffd861";
+    ctx.fillStyle = "#7bcfff";
     ctx.beginPath();
     ctx.moveTo(20, 0);
     ctx.lineTo(-10, -12);
@@ -767,10 +762,7 @@
     room.notes.forEach((line, index) => ctx.fillText(line, 36, 108 + index * 22));
     if (room.movement === "grid") ctx.fillText(`目前格位：(${state.player.gridX}, ${state.player.gridY})`, 36, room.rangeLimited ? 152 : 130);
     if (room.rangeLimited) ctx.fillText(`本次移動起點：(${state.turn.originX}, ${state.turn.originY})｜移動力上限 ${state.turn.budget}`, 36, 174);
-    if (room.previewMove) {
-      const visibleSteps = state.player.previewPath.length + state.player.pathQueue.length + (state.player.moveTo ? 1 : 0);
-      ctx.fillText(`預覽步數：${visibleSteps}｜按 Space 依路徑移動`, 36, 196);
-    }
+    if (room.previewMove) ctx.fillText(`預覽步數：${state.player.previewPath.length}｜按 Space 依路徑移動`, 36, 196);
   }
 
   function computeSpawn(targetRoom) {
