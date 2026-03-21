@@ -433,7 +433,13 @@
   }
 
   function commitPreviewPath(state) {
-    if (!state.player.previewPath.length || state.player.moveTo || state.player.clickTarget) return false;
+    if (state.player.moveTo || state.player.clickTarget || !state.player.previewTarget) return false;
+    if (state.player.previewPath.length === 0) {
+      if (state.player.previewTarget.gridX !== state.player.gridX || state.player.previewTarget.gridY !== state.player.gridY) return false;
+      clearPreviewPath(state);
+      resetTurnBudget(state);
+      return true;
+    }
     state.player.pathQueue = state.player.previewPath.map((step) => ({ ...step }));
     clearPreviewPath(state);
     return true;
@@ -464,7 +470,7 @@
     if (pointBlocked(room, nextWorld.x, nextWorld.y, state.player.radius)) return false;
 
     const existingIndex = state.player.previewPath.findIndex((step) => step.gridX === nextGridX && step.gridY === nextGridY);
-    if (existingIndex === state.player.previewPath.length - 2) {
+    if (existingIndex !== -1 && existingIndex === state.player.previewPath.length - 2) {
       state.player.previewPath.pop();
       if (state.player.previewPath.length === 0) state.player.previewTarget = null;
       else {
@@ -650,7 +656,16 @@
   }
 
   function drawPreviewPath(ctx, room, state) {
-    if (!room.previewMove || state.player.previewPath.length === 0) return;
+    if (!room.previewMove || !state.player.previewTarget) return;
+    if (state.player.previewPath.length === 0) {
+      if (state.player.previewTarget.gridX !== state.player.gridX || state.player.previewTarget.gridY !== state.player.gridY) return;
+      ctx.strokeStyle = "rgba(123, 207, 255, 0.95)";
+      ctx.lineWidth = 6;
+      ctx.beginPath();
+      ctx.arc(state.player.x, state.player.y, PLAYER_RADIUS + 12, 0, Math.PI * 2);
+      ctx.stroke();
+      return;
+    }
     const points = [{ x: state.player.x, y: state.player.y }, ...state.player.previewPath.map((step) => gridToWorld(room, step.gridX, step.gridY))];
     ctx.strokeStyle = "rgba(123, 207, 255, 0.9)";
     ctx.lineWidth = 8;
@@ -814,10 +829,6 @@
     if (room.previewMove === "click") {
       if (state.player.previewTarget && state.player.previewTarget.gridX === snapped.gridX && state.player.previewTarget.gridY === snapped.gridY) {
         commitPreviewPath(state);
-        return;
-      }
-      if (state.player.previewTarget) {
-        clearPreviewPath(state);
         return;
       }
       const path = buildGridPath(room, state.player.gridX, state.player.gridY, snapped.gridX, snapped.gridY, reachable);
