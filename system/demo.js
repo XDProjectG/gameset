@@ -648,8 +648,15 @@
   }
 
   function drawPreviewPath(ctx, room, state) {
-    if (!room.previewMove || state.player.previewPath.length === 0) return;
-    const points = [{ x: state.player.x, y: state.player.y }, ...state.player.previewPath.map((step) => gridToWorld(room, step.gridX, step.gridY))];
+    if (!room.previewMove) return;
+    const visiblePath = state.player.previewPath.length > 0
+      ? state.player.previewPath
+      : [
+        ...(state.player.moveTo ? [{ gridX: state.player.moveTo.gridX, gridY: state.player.moveTo.gridY }] : []),
+        ...state.player.pathQueue,
+      ];
+    if (visiblePath.length === 0) return;
+    const points = [{ x: state.player.x, y: state.player.y }, ...visiblePath.map((step) => gridToWorld(room, step.gridX, step.gridY))];
     ctx.strokeStyle = "rgba(255, 216, 97, 0.9)";
     ctx.lineWidth = 8;
     ctx.lineJoin = "round";
@@ -760,7 +767,10 @@
     room.notes.forEach((line, index) => ctx.fillText(line, 36, 108 + index * 22));
     if (room.movement === "grid") ctx.fillText(`目前格位：(${state.player.gridX}, ${state.player.gridY})`, 36, room.rangeLimited ? 152 : 130);
     if (room.rangeLimited) ctx.fillText(`本次移動起點：(${state.turn.originX}, ${state.turn.originY})｜移動力上限 ${state.turn.budget}`, 36, 174);
-    if (room.previewMove) ctx.fillText(`預覽步數：${state.player.previewPath.length}｜按 Space 依路徑移動`, 36, 196);
+    if (room.previewMove) {
+      const visibleSteps = state.player.previewPath.length + state.player.pathQueue.length + (state.player.moveTo ? 1 : 0);
+      ctx.fillText(`預覽步數：${visibleSteps}｜按 Space 依路徑移動`, 36, 196);
+    }
   }
 
   function computeSpawn(targetRoom) {
