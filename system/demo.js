@@ -460,28 +460,18 @@
 
   function appendPreviewStep(state, room, dirX, dirY) {
     const metrics = gridMetrics(room);
-    const endpoint = previewEndpoint(state);
+    const reachable = reachableCells(room, state);
+    const endpoint = state.player.previewTarget ?? previewEndpoint(state);
     const nextGridX = clamp(endpoint.gridX + dirX, 0, Math.max(0, metrics.columns - 1));
     const nextGridY = clamp(endpoint.gridY + dirY, 0, Math.max(0, metrics.rows - 1));
     if (nextGridX === endpoint.gridX && nextGridY === endpoint.gridY) return false;
-    const reachable = reachableCells(room, state);
     if (reachable && !reachable.has(`${nextGridX},${nextGridY}`)) return false;
     const nextWorld = gridToWorld(room, nextGridX, nextGridY);
     if (pointBlocked(room, nextWorld.x, nextWorld.y, state.player.radius)) return false;
 
-    const existingIndex = state.player.previewPath.findIndex((step) => step.gridX === nextGridX && step.gridY === nextGridY);
-    if (existingIndex !== -1 && existingIndex === state.player.previewPath.length - 2) {
-      state.player.previewPath.pop();
-      if (state.player.previewPath.length === 0) state.player.previewTarget = null;
-      else {
-        const last = state.player.previewPath[state.player.previewPath.length - 1];
-        state.player.previewTarget = { gridX: last.gridX, gridY: last.gridY };
-      }
-      return true;
-    }
-    if (existingIndex !== -1 || state.player.previewPath.length >= state.turn.budget) return false;
-    state.player.previewPath.push({ gridX: nextGridX, gridY: nextGridY });
-    state.player.previewTarget = { gridX: nextGridX, gridY: nextGridY };
+    const path = buildGridPath(room, state.player.gridX, state.player.gridY, nextGridX, nextGridY, reachable);
+    if (path.length === 0 && (nextGridX !== state.player.gridX || nextGridY !== state.player.gridY)) return false;
+    setPreviewPath(state, path, { gridX: nextGridX, gridY: nextGridY });
     return true;
   }
 
