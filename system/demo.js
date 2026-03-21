@@ -29,6 +29,7 @@
       movement: options.movement ?? "free",
       clickMove: options.clickMove ?? false,
       rangeLimited: options.rangeLimited ?? false,
+      previewMove: options.previewMove ?? null,
       entrances: options.entrances ?? [],
       grid: options.grid ?? null,
       notes: options.notes ?? [],
@@ -93,6 +94,32 @@
       grid: { cellSize: GRID_CELL_SIZE },
       obstacles: createClickObstacles(),
       notes: ["可點擊本次移動起點 4 格範圍內的格子，玩家會用格子路徑自動移動。", "按 Space 後才會把目前位置登記成新的移動起點。"],
+    });
+  }
+
+  function createPreviewHoverRoom() {
+    return createRoom("preview-hover-room", "預覽路徑方格房", { width: 1728, height: 1224 }, {
+      movement: "grid",
+      clickMove: true,
+      rangeLimited: true,
+      previewMove: "hover",
+      entrances: [{ x: 1224, y: 792, width: GRID_CELL_SIZE * 2, height: GRID_CELL_SIZE * 2, target: "hub", label: "返回展示間" }],
+      grid: { cellSize: GRID_CELL_SIZE },
+      obstacles: createClickObstacles(),
+      notes: ["方向鍵只會建立暫時路徑；按下 Space 後才會依箭頭路徑移動。", "滑鼠移到可達格子上也會顯示路徑，左鍵可直接確認並開始移動。"],
+    });
+  }
+
+  function createPreviewClickRoom() {
+    return createRoom("preview-click-room", "點擊確認路徑房", { width: 1728, height: 1224 }, {
+      movement: "grid",
+      clickMove: true,
+      rangeLimited: true,
+      previewMove: "click",
+      entrances: [{ x: 1224, y: 792, width: GRID_CELL_SIZE * 2, height: GRID_CELL_SIZE * 2, target: "hub", label: "返回展示間" }],
+      grid: { cellSize: GRID_CELL_SIZE },
+      obstacles: createClickObstacles(),
+      notes: ["方向鍵可先建立暫時路徑；滑鼠左鍵第一次是設定路徑，第二次點同格才會確認移動。", "若改點不同格子，路徑會先收回到玩家所在位置，回到未預覽狀態。"],
     });
   }
 
@@ -203,6 +230,8 @@
         moveProgress: 0,
         pathQueue: [],
         clickTarget: null,
+        previewPath: [],
+        previewTarget: null,
       },
       camera: { x: 0, y: 0 },
       keys: new Set(),
@@ -221,11 +250,17 @@
     state.player.clickTarget = null;
   }
 
+  function clearPreviewPath(state) {
+    state.player.previewPath = [];
+    state.player.previewTarget = null;
+  }
+
   function resetMotionState(state) {
     state.player.moveFrom = null;
     state.player.moveTo = null;
     state.player.moveProgress = 0;
     clearAutoMove(state);
+    clearPreviewPath(state);
   }
 
   function resetTurnBudget(state) {
@@ -397,6 +432,53 @@
     return path;
   }
 
+  function commitPreviewPath(state) {
+    if (!state.player.previewPath.length || state.player.moveTo || state.player.clickTarget) return false;
+    state.player.pathQueue = state.player.previewPath.map((step) => ({ ...step }));
+    clearPreviewPath(state);
+    return true;
+  }
+
+  function setPreviewPath(state, path, target = null) {
+    state.player.previewPath = path.map((step) => ({ ...step }));
+    state.player.previewTarget = target ? { ...target } : null;
+  }
+
+  function previewEndpoint(state) {
+    if (state.player.previewPath.length > 0) {
+      const last = state.player.previewPath[state.player.previewPath.length - 1];
+      return { gridX: last.gridX, gridY: last.gridY };
+    }
+    return { gridX: state.player.gridX, gridY: state.player.gridY };
+  }
+
+  function appendPreviewStep(state, room, dirX, dirY) {
+    const metrics = gridMetrics(room);
+    const endpoint = previewEndpoint(state);
+    const nextGridX = clamp(endpoint.gridX + dirX, 0, Math.max(0, metrics.columns - 1));
+    const nextGridY = clamp(endpoint.gridY + dirY, 0, Math.max(0, metrics.rows - 1));
+    if (nextGridX === endpoint.gridX && nextGridY === endpoint.gridY) return false;
+    const reachable = reachableCells(room, state);
+    if (reachable && !reachable.has(`${nextGridX},${nextGridY}`)) return false;
+    const nextWorld = gridToWorld(room, nextGridX, nextGridY);
+    if (pointBlocked(room, nextWorld.x, nextWorld.y, state.player.radius)) return false;
+
+    const existingIndex = state.player.previewPath.findIndex((step) => step.gridX === nextGridX && step.gridY === nextGridY);
+    if (existingIndex === state.player.previewPath.length - 2) {
+      state.player.previewPath.pop();
+      if (state.player.previewPath.length === 0) state.player.previewTarget = null;
+      else {
+        const last = state.player.previewPath[state.player.previewPath.length - 1];
+        state.player.previewTarget = { gridX: last.gridX, gridY: last.gridY };
+      }
+      return true;
+    }
+    if (existingIndex !== -1 || state.player.previewPath.length >= state.turn.budget) return false;
+    state.player.previewPath.push({ gridX: nextGridX, gridY: nextGridY });
+    state.player.previewTarget = { gridX: nextGridX, gridY: nextGridY };
+    return true;
+  }
+
   function startGridStep(state, room, nextGridX, nextGridY) {
     const target = gridToWorld(room, nextGridX, nextGridY);
     if (pointBlocked(room, target.x, target.y, state.player.radius)) return false;
@@ -452,6 +534,7 @@
         state.player.moveTo = null;
         state.player.moveProgress = 0;
         if (room.rangeLimited) state.turn.budget = RANGE_LIMIT;
+        if (room.previewMove && state.player.pathQueue.length === 0) resetTurnBudget(state);
       }
       return;
     }
@@ -461,6 +544,8 @@
       if (!startGridStep(state, room, next.gridX, next.gridY)) state.player.pathQueue = [];
       return;
     }
+
+    if (room.previewMove) return;
 
     const direction = primaryDirection(state);
     if (!direction) return;
@@ -564,6 +649,45 @@
     });
   }
 
+  function drawPreviewPath(ctx, room, state) {
+    if (!room.previewMove || state.player.previewPath.length === 0) return;
+    const points = [{ x: state.player.x, y: state.player.y }, ...state.player.previewPath.map((step) => gridToWorld(room, step.gridX, step.gridY))];
+    ctx.strokeStyle = "rgba(123, 207, 255, 0.9)";
+    ctx.lineWidth = 8;
+    ctx.lineJoin = "round";
+    ctx.lineCap = "round";
+    ctx.beginPath();
+    ctx.moveTo(points[0].x, points[0].y);
+    for (let index = 1; index < points.length; index += 1) ctx.lineTo(points[index].x, points[index].y);
+    ctx.stroke();
+
+    ctx.fillStyle = "rgba(123, 207, 255, 0.26)";
+    points.slice(1).forEach((point) => {
+      ctx.beginPath();
+      ctx.arc(point.x, point.y, 12, 0, Math.PI * 2);
+      ctx.fill();
+    });
+
+    const end = points[points.length - 1];
+    const previous = points[points.length - 2] ?? points[0];
+    const angle = Math.atan2(end.y - previous.y, end.x - previous.x);
+    ctx.save();
+    ctx.translate(end.x, end.y);
+    ctx.rotate(angle);
+    ctx.fillStyle = "#7bcfff";
+    ctx.beginPath();
+    ctx.moveTo(20, 0);
+    ctx.lineTo(-10, -12);
+    ctx.lineTo(-10, -5);
+    ctx.lineTo(-24, -5);
+    ctx.lineTo(-24, 5);
+    ctx.lineTo(-10, 5);
+    ctx.lineTo(-10, 12);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+  }
+
   function drawRoom(ctx, canvas, state) {
     const room = state.rooms[state.currentRoomId];
     const camera = state.camera;
@@ -598,6 +722,7 @@
 
     drawObstacles(ctx, room);
     drawEntrances(ctx, state, room);
+    drawPreviewPath(ctx, room, state);
 
     ctx.fillStyle = room.rangeLimited ? "#9cd0ff" : room.movement === "grid" ? "#8ff0c4" : "#f3d37c";
     ctx.beginPath();
@@ -616,10 +741,11 @@
     ctx.strokeRect(canvas.width / 2 - deadZoneWidth / 2, canvas.height / 2 - deadZoneHeight / 2, deadZoneWidth, deadZoneHeight);
     ctx.setLineDash([]);
 
+    const infoPanelHeight = room.previewMove ? 220 : room.rangeLimited ? 176 : 152;
     ctx.fillStyle = "rgba(12,19,29,0.76)";
-    ctx.fillRect(18, 18, 540, room.rangeLimited ? 176 : 152);
+    ctx.fillRect(18, 18, 540, infoPanelHeight);
     ctx.strokeStyle = "rgba(175,198,231,0.4)";
-    ctx.strokeRect(18, 18, 540, room.rangeLimited ? 176 : 152);
+    ctx.strokeRect(18, 18, 540, infoPanelHeight);
     ctx.fillStyle = "#ecf2ff";
     ctx.textAlign = "start";
     ctx.textBaseline = "alphabetic";
@@ -629,11 +755,14 @@
     ctx.fillStyle = "#c7d9f8";
     const controlLine = room.movement === "free"
       ? room.clickMove ? "滑鼠點擊地面 / 方向鍵移動，Backspace 退出展示間" : "WASD / 方向鍵移動，Backspace 退出展示間"
-      : room.clickMove ? "滑鼠點擊或按住方向鍵移動，Space 結束回合，Backspace 退出" : "按住方向鍵 / WASD 持續逐格移動，Backspace 退出展示間";
+      : room.previewMove === "hover" ? "方向鍵建立路徑、滑鼠懸停預覽，Space / 左鍵確認移動，Backspace 退出"
+        : room.previewMove === "click" ? "方向鍵建立路徑、左鍵點選/再點確認，Space 也可移動，Backspace 退出"
+          : room.clickMove ? "滑鼠點擊或按住方向鍵移動，Space 結束回合，Backspace 退出" : "按住方向鍵 / WASD 持續逐格移動，Backspace 退出展示間";
     ctx.fillText(controlLine, 36, 82);
     room.notes.forEach((line, index) => ctx.fillText(line, 36, 108 + index * 22));
     if (room.movement === "grid") ctx.fillText(`目前格位：(${state.player.gridX}, ${state.player.gridY})`, 36, room.rangeLimited ? 152 : 130);
     if (room.rangeLimited) ctx.fillText(`本次移動起點：(${state.turn.originX}, ${state.turn.originY})｜移動力上限 ${state.turn.budget}`, 36, 174);
+    if (room.previewMove) ctx.fillText(`預覽步數：${state.player.previewPath.length}｜按 Space 依路徑移動`, 36, 196);
   }
 
   function computeSpawn(targetRoom) {
@@ -673,6 +802,30 @@
     if (pointBlocked(room, snapped.x, snapped.y, state.player.radius)) return;
     const reachable = room.rangeLimited ? reachableCells(room, state) : null;
     if (room.rangeLimited && !reachable.has(`${snapped.gridX},${snapped.gridY}`)) return;
+
+    if (room.previewMove === "hover") {
+      const path = buildGridPath(room, state.player.gridX, state.player.gridY, snapped.gridX, snapped.gridY, reachable);
+      if (path.length === 0 && (snapped.gridX !== state.player.gridX || snapped.gridY !== state.player.gridY)) return;
+      setPreviewPath(state, path, { gridX: snapped.gridX, gridY: snapped.gridY });
+      commitPreviewPath(state);
+      return;
+    }
+
+    if (room.previewMove === "click") {
+      if (state.player.previewTarget && state.player.previewTarget.gridX === snapped.gridX && state.player.previewTarget.gridY === snapped.gridY) {
+        commitPreviewPath(state);
+        return;
+      }
+      if (state.player.previewTarget) {
+        clearPreviewPath(state);
+        return;
+      }
+      const path = buildGridPath(room, state.player.gridX, state.player.gridY, snapped.gridX, snapped.gridY, reachable);
+      if (path.length === 0 && (snapped.gridX !== state.player.gridX || snapped.gridY !== state.player.gridY)) return;
+      setPreviewPath(state, path, { gridX: snapped.gridX, gridY: snapped.gridY });
+      return;
+    }
+
     const path = buildGridPath(room, state.player.gridX, state.player.gridY, snapped.gridX, snapped.gridY, reachable);
     if (path.length === 0 && (snapped.gridX !== state.player.gridX || snapped.gridY !== state.player.gridY)) return;
     state.player.pathQueue = path;
@@ -687,6 +840,8 @@
       createFreeClickRoom(),
       createGridClickRoom(),
       createRangeClickRoom(),
+      createPreviewHoverRoom(),
+      createPreviewClickRoom(),
     ];
     const rooms = Object.fromEntries([createHubRoom(showcaseRooms), ...showcaseRooms].map((room) => [room.id, room]));
     let state = null;
@@ -733,13 +888,33 @@
         }
         if (key === " ") {
           const room = state.rooms[state.currentRoomId];
+          if (room.previewMove) {
+            commitPreviewPath(state);
+            return;
+          }
           if (room.rangeLimited && !state.player.moveTo) {
             resetTurnBudget(state);
             clearAutoMove(state);
           }
           return;
         }
-        if (state.rooms[state.currentRoomId].clickMove) clearAutoMove(state);
+        const currentRoom = state.rooms[state.currentRoomId];
+        if (currentRoom.previewMove) {
+          const directionMap = {
+            ArrowUp: { x: 0, y: -1 },
+            w: { x: 0, y: -1 },
+            ArrowDown: { x: 0, y: 1 },
+            s: { x: 0, y: 1 },
+            ArrowLeft: { x: -1, y: 0 },
+            a: { x: -1, y: 0 },
+            ArrowRight: { x: 1, y: 0 },
+            d: { x: 1, y: 0 },
+          };
+          const direction = directionMap[key];
+          if (direction && !state.player.moveTo && state.player.pathQueue.length === 0) appendPreviewStep(state, currentRoom, direction.x, direction.y);
+          return;
+        }
+        if (currentRoom.clickMove) clearAutoMove(state);
         state.keys.add(key);
       };
 
@@ -760,15 +935,44 @@
         handleCanvasClick(state, event);
       };
 
+      const handleMouseMove = (event) => {
+        if (!state) return;
+        const room = state.rooms[state.currentRoomId];
+        if (room.previewMove !== "hover" || state.player.moveTo || state.player.pathQueue.length > 0) return;
+        const point = canvasToWorld(state, event.clientX, event.clientY);
+        const snapped = toGridPoint(room, point.x, point.y);
+        const reachable = reachableCells(room, state);
+        if (pointBlocked(room, snapped.x, snapped.y, state.player.radius) || (reachable && !reachable.has(`${snapped.gridX},${snapped.gridY}`))) {
+          clearPreviewPath(state);
+          return;
+        }
+        const path = buildGridPath(room, state.player.gridX, state.player.gridY, snapped.gridX, snapped.gridY, reachable);
+        if (path.length === 0 && (snapped.gridX !== state.player.gridX || snapped.gridY !== state.player.gridY)) {
+          clearPreviewPath(state);
+          return;
+        }
+        setPreviewPath(state, path, { gridX: snapped.gridX, gridY: snapped.gridY });
+      };
+
+      const handleMouseLeave = () => {
+        if (!state) return;
+        const room = state.rooms[state.currentRoomId];
+        if (room.previewMove === "hover") clearPreviewPath(state);
+      };
+
       window.addEventListener("keydown", handleKeyDown);
       window.addEventListener("keyup", handleKeyUp);
       window.addEventListener("resize", handleResize);
       canvas.addEventListener("click", handleClick);
+      canvas.addEventListener("mousemove", handleMouseMove);
+      canvas.addEventListener("mouseleave", handleMouseLeave);
       cleanup = [
         () => window.removeEventListener("keydown", handleKeyDown),
         () => window.removeEventListener("keyup", handleKeyUp),
         () => window.removeEventListener("resize", handleResize),
         () => canvas.removeEventListener("click", handleClick),
+        () => canvas.removeEventListener("mousemove", handleMouseMove),
+        () => canvas.removeEventListener("mouseleave", handleMouseLeave),
       ];
 
       handleResize();
