@@ -4,7 +4,6 @@
     map: document.getElementById("map-screen"),
   };
   const launchGameButton = document.getElementById("launch-game");
-  const launchDemoButton = document.getElementById("launch-demo");
   const canvas = document.getElementById("world-canvas");
   const ctx = canvas.getContext("2d");
 
@@ -24,30 +23,17 @@
 
   function showSelection() {
     currentMode = "selection";
-    window.DemoSystem?.stop();
     controller.stop();
     controller.showDomScreen("selection");
   }
 
   function startGame() {
-    window.DemoSystem?.stop();
     currentMode = "game";
     controller.resizeCanvas();
     controller.startOpeningSequence();
   }
 
-  function startDemo() {
-    controller.stop();
-    currentMode = "demo";
-    controller.showDomScreen("map");
-    window.DemoSystem.start({
-      canvas,
-      onExit: showSelection,
-    });
-  }
-
   launchGameButton.addEventListener("click", startGame);
-  launchDemoButton.addEventListener("click", startDemo);
 
   controller.bindEvents();
   controller.resizeCanvas();
