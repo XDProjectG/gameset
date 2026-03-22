@@ -985,4 +985,22 @@
   }
 
   window.DemoSystem = createDemoSystem();
+  
+  const launchDemoButton = document.getElementById("launch-demo");
+
+  launchDemoButton.addEventListener("click", () => {
+  const canvas = document.getElementById("world-canvas");
+
+  document.getElementById("game-select-screen").classList.remove("active");
+  document.getElementById("map-screen").classList.add("active");
+
+  window.DemoSystem.start({
+    canvas,
+    onExit: () => {
+      window.DemoSystem.stop();
+      document.getElementById("map-screen").classList.remove("active");
+      document.getElementById("game-select-screen").classList.add("active");
+    }
+  });
+});
 })();
