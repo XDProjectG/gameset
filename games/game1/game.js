@@ -1,49 +1,4 @@
 /////////////////
-// main logic
-///
-
-const screens = {
-  selection: document.getElementById("game-select-screen"),
-  map: document.getElementById("map-screen"),
-};
-const launchGameButton = document.getElementById("launch-game");
-const canvas = document.getElementById("world-canvas");
-const ctx = canvas.getContext("2d");
-
-let currentMode = "selection";
-const state = window.SGZModel.createInitialState();
-const uiLayout = window.SGZModel.createUiLayout();
-
-const render = () => window.SGZRenderer.render(ctx, canvas, state, uiLayout);
-const controller = window.SGZController.createController({
-  screens,
-  canvas,
-  state,
-  uiLayout,
-  render,
-  isEnabled: () => currentMode === "game",
-});
-
-function showSelection() {
-  currentMode = "selection";
-  controller.stop();
-  controller.showDomScreen("selection");
-}
-
-function startGame() {
-  currentMode = "game";
-  controller.resizeCanvas();
-  controller.startOpeningSequence();
-}
-
-launchGameButton.addEventListener("click", startGame);
-
-controller.bindEvents();
-controller.resizeCanvas();
-showSelection();
-
-
-/////////////////
 // model
 ///
 
@@ -201,7 +156,7 @@ function loadGame(currentState) {
   return true;
 }
 
-window.SGZModel = {
+const SGZModel = {
   commands,
   titleActions,
   passes,
@@ -335,7 +290,7 @@ function drawTitleScene(ctx, canvas, state, uiLayout) {
   fillRoundRect(ctx, panel.x, panel.y, panel.w, panel.h, 18, "rgba(15,23,37,0.84)", "rgba(125,153,196,0.5)");
 
   uiLayout.titleButtons = [];
-  window.SGZModel.titleActions.forEach((action, idx) => {
+  SGZModel.titleActions.forEach((action, idx) => {
     const button = {
       key: action.key,
       x: panel.x + 60,
@@ -386,7 +341,7 @@ function cityToPixel(canvas, city) {
 function drawCities(ctx, canvas, state, uiLayout) {
   uiLayout.cityHit = [];
 
-  window.SGZModel.passes.forEach((pass) => {
+  SGZModel.passes.forEach((pass) => {
     const x = pass.x * canvas.width;
     const y = pass.y * canvas.height;
     ctx.save();
@@ -428,7 +383,7 @@ function drawCities(ctx, canvas, state, uiLayout) {
 }
 
 function drawCanvasPanels(ctx, canvas, state, uiLayout) {
-  const city = window.SGZModel.selectedCity(state);
+  const city = SGZModel.selectedCity(state);
 
   const timePanel = { x: 18, y: 18, w: 250, h: 90 };
   fillRoundRect(ctx, timePanel.x, timePanel.y, timePanel.w, timePanel.h, 12, "rgba(20,32,48,0.72)", "rgba(125,153,196,0.45)");
@@ -436,7 +391,7 @@ function drawCanvasPanels(ctx, canvas, state, uiLayout) {
   ctx.font = "18px 'Noto Sans TC', sans-serif";
   ctx.fillText("時間", timePanel.x + 16, timePanel.y + 28);
   ctx.font = "16px 'Noto Sans TC', sans-serif";
-  ctx.fillText(window.SGZModel.formatDate(state), timePanel.x + 16, timePanel.y + 58);
+  ctx.fillText(SGZModel.formatDate(state), timePanel.x + 16, timePanel.y + 58);
 
   const cityPanel = { x: canvas.width - 430, y: 18, w: 412, h: canvas.height - 36 };
   fillRoundRect(ctx, cityPanel.x, cityPanel.y, cityPanel.w, cityPanel.h, 14, "rgba(20,32,48,0.72)", "rgba(125,153,196,0.45)");
@@ -454,7 +409,7 @@ function drawCanvasPanels(ctx, canvas, state, uiLayout) {
       `士${Math.round(city.workforce.scholar * 100)}% 農${Math.round(city.workforce.farmer * 100)}% 工${Math.round(city.workforce.artisan * 100)}% 商${Math.round(city.workforce.merchant * 100)}%`,
       `文教 ${city.literacy}  戰備 ${city.preparedness}  稅率 ${city.tax}%  法律 ${city.law}`,
       `文人：講學、說書、政令宣導（季增文教）`,
-      `農業：${city.geo}/${city.crop}，生產係數 ${window.SGZModel.cropMultiplier(state, city).toFixed(2)}`,
+      `農業：${city.geo}/${city.crop}，生產係數 ${SGZModel.cropMultiplier(state, city).toFixed(2)}`,
       `工業：採礦、伐木、器具生產`,
       `商業：糧材書器轉賣，商稅受稅率影響`,
       `內府：${city.offices.map((o) => `${o.role}:${o.assigned}`).join(" / ")}`,
@@ -478,7 +433,7 @@ function drawCanvasPanels(ctx, canvas, state, uiLayout) {
   uiLayout.commandBlocks = [];
 
   ctx.font = "16px 'Noto Sans TC', sans-serif";
-  window.SGZModel.commands.forEach((name, idx) => {
+  SGZModel.commands.forEach((name, idx) => {
     const col = idx % 3;
     const row = Math.floor(idx / 3);
     const x = menuX + col * (blockW + gap);
@@ -554,7 +509,7 @@ function render(ctx, canvas, state, uiLayout) {
   drawModalIfNeeded(ctx, canvas, state, uiLayout);
 }
 
-window.SGZRenderer = {
+const SGZRenderer = {
   render,
   findHit,
 };
@@ -564,9 +519,9 @@ window.SGZRenderer = {
 // controller
 ///
 
-function createController({ screens, canvas, state, uiLayout, render, isEnabled }) {
-  const model = window.SGZModel;
-  const renderer = window.SGZRenderer;
+function createController({ screens, canvas, state, uiLayout, render, isEnabled, onBackToSelection = null }) {
+  const model = SGZModel;
+  const renderer = SGZRenderer;
   let openingTimerId = null;
   let animationFrameId = null;
 
@@ -736,9 +691,8 @@ function createController({ screens, canvas, state, uiLayout, render, isEnabled 
       state.modalMessage = "時間已推進一季。";
     }
     if (action.key === "back") {
-      state.activeModal = null;
-      state.modalMessage = "";
-      goToTitle();
+      stop();
+      onBackToSelection?.();
       return;
     }
     render();
@@ -828,16 +782,24 @@ function createController({ screens, canvas, state, uiLayout, render, isEnabled 
     window.addEventListener("resize", resizeCanvas);
   }
 
+  function unbindEvents() {
+    canvas.removeEventListener("mousemove", handlePointerMove);
+    canvas.removeEventListener("click", handleCanvasClick);
+    window.removeEventListener("keydown", handleKeydown);
+    window.removeEventListener("resize", resizeCanvas);
+  }
+
   return {
     bindEvents,
     resizeCanvas,
+    unbindEvents,
     showDomScreen,
     startOpeningSequence,
     stop,
   };
 }
 
-window.SGZController = {
+const SGZController = {
   createController,
 };
 
@@ -845,3 +807,39 @@ window.SGZController = {
 // camera
 ///
 
+
+
+export function startGame(canvas, onExit) {
+  const screens = {
+    selection: document.getElementById("game-select-screen"),
+    map: document.getElementById("map-screen"),
+  };
+  const ctx = canvas.getContext("2d");
+
+  let currentMode = "game";
+  const state = SGZModel.createInitialState();
+  const uiLayout = SGZModel.createUiLayout();
+
+  const render = () => SGZRenderer.render(ctx, canvas, state, uiLayout);
+  const controller = SGZController.createController({
+    screens,
+    canvas,
+    state,
+    uiLayout,
+    render,
+    isEnabled: () => currentMode === "game",
+    onBackToSelection: onExit,
+  });
+
+  controller.bindEvents();
+  controller.resizeCanvas();
+  controller.startOpeningSequence();
+
+  return {
+    stop() {
+      currentMode = "selection";
+      controller.stop();
+      controller.unbindEvents();
+    },
+  };
+}
