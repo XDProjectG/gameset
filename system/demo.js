@@ -70,13 +70,28 @@ function normalizeTextLayoutOptions(options = {}) {
     font: options.font ?? "'Noto Sans TC', sans-serif",
     fontSize: options.fontSize ?? 34,
     lineGap: options.lineGap ?? 40,
-    columnGap: options.columnGap ?? 48,
+    columnGap: options.columnGap ?? options.lineGap ?? 40,
     color: options.color ?? "#f5f7ff",
     top: options.top ?? 80,
-    right: options.right ?? 120,
+    right: options.right ?? null,
     left: options.left ?? 90,
     maxWidth: options.maxWidth ?? 820,
   };
+}
+
+function updateTypewriterPlayback(playback, timestamp) {
+  if (!playback) return 0;
+  if (!playback.startedAt) {
+    playback.startedAt = timestamp;
+    playback.lastTickAt = timestamp;
+    playback.elapsed = 0;
+    return 0;
+  }
+  const delta = Math.max(0, timestamp - playback.lastTickAt);
+  const rate = playback.accelerating ? playback.accelerationRate : 1;
+  playback.elapsed += delta * rate;
+  playback.lastTickAt = timestamp;
+  return playback.elapsed;
 }
 
 function buildHorizontalLines(ctx, text, maxWidth) {
@@ -130,6 +145,7 @@ function drawTypewriterText(ctx, canvas, elapsedMs, options = {}) {
       consumed += lineChars.length;
     });
   } else {
+    const rightEdge = config.right ?? canvas.width - 120;
     const bottom = canvas.height - config.top;
     const usableHeight = Math.max(config.lineGap, bottom - config.top);
     const rowsPerColumn = Math.max(1, Math.floor(usableHeight / config.lineGap));
@@ -138,10 +154,10 @@ function drawTypewriterText(ctx, canvas, elapsedMs, options = {}) {
       if (index >= shownCount) return;
       const column = Math.floor(index / rowsPerColumn);
       const row = index % rowsPerColumn;
-      const x = config.right - column * config.columnGap;
+      const x = rightEdge - column * config.columnGap;
       const y = config.top + row * config.lineGap;
       if (config.gradient) {
-        const alpha = Math.max(0.2, Math.min(1, (shownCount - index) / fadeWindow));
+        const alpha = shownCount >= chars.length ? 1 : Math.max(0.2, Math.min(1, (shownCount - index) / fadeWindow));
         ctx.fillStyle = `rgba(245,247,255,${alpha})`;
       } else {
         ctx.fillStyle = config.color;
@@ -895,7 +911,7 @@ function drawRoom(ctx, canvas, state) {
 function drawOpeningShowcase(ctx, canvas, state, timestamp) {
   const opening = state.openingShowcase;
   if (!opening?.active || !opening.config) return;
-  const elapsed = Math.max(0, timestamp - opening.enteredAt);
+  const elapsed = updateTypewriterPlayback(opening.playback, timestamp);
 
   ctx.fillStyle = "#000";
   ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -927,6 +943,13 @@ function tryTransitions(state) {
       enteredAt: performance.now(),
       completed: false,
       config: state.openingShowcase?.config ?? null,
+      playback: {
+        startedAt: 0,
+        lastTickAt: 0,
+        elapsed: 0,
+        accelerationRate: state.openingShowcase?.playback?.accelerationRate ?? 3,
+        accelerating: false,
+      },
     };
     return;
   }
@@ -1038,6 +1061,13 @@ function createDemoSystem() {
         text: openingShowcase.message,
         ...openingShowcase.textOptions,
       },
+      playback: {
+        startedAt: 0,
+        lastTickAt: 0,
+        elapsed: 0,
+        accelerationRate: 3,
+        accelerating: false,
+      },
     };
     placePlayer(state, "hub", { x: rooms.hub.world.width / 2, y: rooms.hub.world.height - 220 });
     state.running = true;
@@ -1047,10 +1077,18 @@ function createDemoSystem() {
       const key = event.key.length === 1 ? event.key.toLowerCase() : event.key;
       if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Backspace", "w", "a", "s", "d", " "].includes(key)) event.preventDefault();
       if (state.openingShowcase?.active) {
+        if (key === " ") {
+          state.openingShowcase.playback.accelerating = true;
+          return;
+        }
         if (!state.openingShowcase.completed) return;
         state.openingShowcase.active = false;
         state.openingShowcase.enteredAt = 0;
         state.openingShowcase.completed = false;
+        state.openingShowcase.playback.startedAt = 0;
+        state.openingShowcase.playback.lastTickAt = 0;
+        state.openingShowcase.playback.elapsed = 0;
+        state.openingShowcase.playback.accelerating = false;
         placePlayer(state, "hub", { x: rooms.hub.world.width / 2, y: rooms.hub.world.height - 220 });
         return;
       }
@@ -1093,6 +1131,7 @@ function createDemoSystem() {
 
     const handleKeyUp = (event) => {
       const key = event.key.length === 1 ? event.key.toLowerCase() : event.key;
+      if (state?.openingShowcase?.active && key === " ") state.openingShowcase.playback.accelerating = false;
       state?.keys.delete(key);
     };
 
