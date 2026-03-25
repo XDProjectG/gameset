@@ -32,10 +32,12 @@ function createRoom(id, name, world, options = {}) {
     world,
     movement: options.movement ?? "free",
     clickMove: options.clickMove ?? false,
+    keyboardGraphMove: options.keyboardGraphMove ?? false,
     rangeLimited: options.rangeLimited ?? false,
     previewMove: options.previewMove ?? null,
     entrances: options.entrances ?? [],
     grid: options.grid ?? null,
+    graph: options.graph ?? null,
     notes: options.notes ?? [],
     obstacles: options.obstacles ?? [],
   };
@@ -260,6 +262,89 @@ function createPreviewClickRoom() {
   });
 }
 
+function createNetworkConstraintRoom() {
+  const nodes = [
+    { id: 0, x: 280, y: 220 },
+    { id: 1, x: 520, y: 180 },
+    { id: 2, x: 820, y: 260 },
+    { id: 3, x: 340, y: 510 },
+    { id: 4, x: 620, y: 460 },
+    { id: 5, x: 890, y: 560 },
+    { id: 6, x: 420, y: 830 },
+    { id: 7, x: 700, y: 760 },
+    { id: 8, x: 1040, y: 840 },
+    { id: 9, x: 1280, y: 620 },
+  ];
+  const edges = [
+    [0, 1], [0, 3],
+    [1, 2], [1, 4],
+    [2, 5],
+    [3, 4], [3, 6],
+    [4, 5], [4, 7],
+    [5, 8],
+    [6, 7],
+    [7, 8], [5, 9],
+    [8, 9],
+  ];
+  const hubNode = nodes.find((node) => node.id === 9);
+  return createRoom("network-room", "約束網狀地圖房", { width: 1760, height: 1240 }, {
+    movement: "network",
+    clickMove: true,
+    entrances: [{
+      x: hubNode.x - 78,
+      y: hubNode.y - 58,
+      width: 156,
+      height: 116,
+      target: "hub",
+      label: "返回展示間",
+    }],
+    graph: { nodes, edges, hubNodeId: 9 },
+    notes: ["玩家初始會隨機落在任一節點上，只能沿著節點與連線行走。", "在節點上會出現光圈，行走中的連線會高亮提示。"],
+  });
+}
+
+function createNetworkKeyboardRoom() {
+  const nodes = [
+    { id: 0, x: 280, y: 220 },
+    { id: 1, x: 520, y: 180 },
+    { id: 2, x: 820, y: 260 },
+    { id: 3, x: 340, y: 510 },
+    { id: 4, x: 620, y: 460 },
+    { id: 5, x: 890, y: 560 },
+    { id: 6, x: 420, y: 830 },
+    { id: 7, x: 700, y: 760 },
+    { id: 8, x: 1040, y: 840 },
+    { id: 9, x: 1280, y: 620 },
+  ];
+  const edges = [
+    [0, 1], [0, 3],
+    [1, 2], [1, 4],
+    [2, 5],
+    [3, 4], [3, 6],
+    [4, 5], [4, 7],
+    [5, 8], [5, 9],
+    [6, 7],
+    [7, 8],
+    [8, 9],
+  ];
+  const hubNode = nodes.find((node) => node.id === 9);
+  return createRoom("network-key-room", "網狀地圖鍵盤房", { width: 1760, height: 1240 }, {
+    movement: "network",
+    clickMove: true,
+    keyboardGraphMove: true,
+    entrances: [{
+      x: hubNode.x - 78,
+      y: hubNode.y - 58,
+      width: 156,
+      height: 116,
+      target: "hub",
+      label: "返回展示間",
+    }],
+    graph: { nodes, edges, hubNodeId: 9 },
+    notes: ["沿用上一間網狀地圖並追加方向鍵移動。", "方向鍵會挑選該方向最接近的鄰接節點，路徑同樣受連線約束。"],
+  });
+}
+
 function createHubRoom(rooms) {
   const world = { width: 2160, height: 1480 };
   const startX = 360;
@@ -369,6 +454,9 @@ function createState(canvas, rooms) {
       clickTarget: null,
       previewPath: [],
       previewTarget: null,
+      graphNodeId: null,
+      graphPath: [],
+      graphActiveEdge: null,
     },
     camera: { x: 0, y: 0 },
     keys: new Set(),
@@ -386,6 +474,8 @@ function createState(canvas, rooms) {
 function clearAutoMove(state) {
   state.player.pathQueue = [];
   state.player.clickTarget = null;
+  state.player.graphPath = [];
+  state.player.graphActiveEdge = null;
 }
 
 function clearPreviewPath(state) {
@@ -418,6 +508,83 @@ function syncGridPosition(state, room) {
   if (room.rangeLimited) resetTurnBudget(state);
 }
 
+function graphNodeById(room, nodeId) {
+  return room.graph.nodes.find((node) => node.id === nodeId) ?? null;
+}
+
+function buildGraphAdjacency(room) {
+  const adjacency = new Map();
+  room.graph.nodes.forEach((node) => adjacency.set(node.id, []));
+  room.graph.edges.forEach(([a, b]) => {
+    adjacency.get(a)?.push(b);
+    adjacency.get(b)?.push(a);
+  });
+  return adjacency;
+}
+
+function buildGraphPath(room, fromNodeId, toNodeId) {
+  if (fromNodeId === toNodeId) return [];
+  const adjacency = buildGraphAdjacency(room);
+  const queue = [fromNodeId];
+  const cameFrom = new Map([[fromNodeId, null]]);
+
+  while (queue.length > 0) {
+    const current = queue.shift();
+    if (current === toNodeId) break;
+    const neighbors = adjacency.get(current) ?? [];
+    neighbors.forEach((next) => {
+      if (cameFrom.has(next)) return;
+      cameFrom.set(next, current);
+      queue.push(next);
+    });
+  }
+
+  if (!cameFrom.has(toNodeId)) return [];
+  const path = [];
+  let cursor = toNodeId;
+  while (cursor !== fromNodeId) {
+    path.unshift(cursor);
+    cursor = cameFrom.get(cursor);
+  }
+  return path;
+}
+
+function nearestGraphNode(room, x, y, maxDistance = 44) {
+  let best = null;
+  let bestDistance = Infinity;
+  room.graph.nodes.forEach((node) => {
+    const distance = Math.hypot(x - node.x, y - node.y);
+    if (distance < bestDistance) {
+      best = node;
+      bestDistance = distance;
+    }
+  });
+  if (best && bestDistance <= maxDistance) return best;
+  return null;
+}
+
+function directionalGraphNeighbor(room, nodeId, direction) {
+  const fromNode = graphNodeById(room, nodeId);
+  if (!fromNode) return null;
+  const adjacency = buildGraphAdjacency(room);
+  const neighbors = adjacency.get(nodeId) ?? [];
+  let bestNodeId = null;
+  let bestScore = 0.35;
+  neighbors.forEach((nextId) => {
+    const nextNode = graphNodeById(room, nextId);
+    if (!nextNode) return;
+    const vx = nextNode.x - fromNode.x;
+    const vy = nextNode.y - fromNode.y;
+    const length = Math.hypot(vx, vy) || 1;
+    const dot = (vx / length) * direction.x + (vy / length) * direction.y;
+    if (dot > bestScore) {
+      bestScore = dot;
+      bestNodeId = nextId;
+    }
+  });
+  return bestNodeId;
+}
+
 function placePlayer(state, roomId, spawn = null) {
   state.currentRoomId = roomId;
   const room = state.rooms[roomId];
@@ -432,6 +599,12 @@ function placePlayer(state, roomId, spawn = null) {
       state.player.y = snapped.y;
       syncGridPosition(state, room);
     }
+  } else if (room.movement === "network") {
+    const randomIndex = Math.floor(Math.random() * room.graph.nodes.length);
+    const startNode = room.graph.nodes[randomIndex];
+    state.player.graphNodeId = startNode.id;
+    state.player.x = startNode.x;
+    state.player.y = startNode.y;
   } else {
     const resolved = resolveMovementWithObstacles(room, { x, y }, { x, y }, state.player.radius);
     state.player.x = resolved.x;
@@ -689,9 +862,51 @@ function updateGridPlayer(state, room, dt) {
   startGridStep(state, room, nextGridX, nextGridY);
 }
 
+function updateNetworkPlayer(state, room, dt) {
+  if (state.player.moveTo) {
+    state.player.moveProgress = Math.min(1, state.player.moveProgress + (PLAYER_SPEED * dt) / Math.max(1, Math.hypot(state.player.moveTo.x - state.player.moveFrom.x, state.player.moveTo.y - state.player.moveFrom.y)));
+    const t = state.player.moveProgress;
+    state.player.x = state.player.moveFrom.x + (state.player.moveTo.x - state.player.moveFrom.x) * t;
+    state.player.y = state.player.moveFrom.y + (state.player.moveTo.y - state.player.moveFrom.y) * t;
+    if (t >= 1) {
+      state.player.x = state.player.moveTo.x;
+      state.player.y = state.player.moveTo.y;
+      state.player.graphNodeId = state.player.moveTo.nodeId;
+      state.player.moveFrom = null;
+      state.player.moveTo = null;
+      state.player.moveProgress = 0;
+      state.player.graphActiveEdge = null;
+    }
+    return;
+  }
+
+  if (room.keyboardGraphMove && state.player.graphPath.length === 0) {
+    const direction = primaryDirection(state);
+    if (direction) {
+      const nextNodeId = directionalGraphNeighbor(room, state.player.graphNodeId, direction);
+      if (nextNodeId !== null) state.player.graphPath = [nextNodeId];
+    }
+  }
+  if (state.player.graphPath.length === 0) return;
+  const nextNodeId = state.player.graphPath.shift();
+  const fromNodeId = state.player.graphNodeId;
+  const fromNode = graphNodeById(room, fromNodeId);
+  const nextNode = graphNodeById(room, nextNodeId);
+  if (!fromNode || !nextNode) {
+    state.player.graphPath = [];
+    state.player.graphActiveEdge = null;
+    return;
+  }
+  state.player.moveFrom = { x: fromNode.x, y: fromNode.y, nodeId: fromNodeId };
+  state.player.moveTo = { x: nextNode.x, y: nextNode.y, nodeId: nextNodeId };
+  state.player.moveProgress = 0;
+  state.player.graphActiveEdge = [fromNodeId, nextNodeId];
+}
+
 function updatePlayer(state, dt) {
   const room = state.rooms[state.currentRoomId];
   if (room.movement === "grid") updateGridPlayer(state, room, dt);
+  else if (room.movement === "network") updateNetworkPlayer(state, room, dt);
   else updateFreePlayer(state, room, dt);
 }
 
@@ -831,6 +1046,49 @@ function drawPreviewPath(ctx, room, state) {
   ctx.restore();
 }
 
+function drawGraphLayer(ctx, room, state) {
+  if (room.movement !== "network") return;
+  const hubNodeId = room.graph.hubNodeId;
+  const activeEdge = state.player.graphActiveEdge;
+
+  room.graph.edges.forEach(([a, b]) => {
+    const from = graphNodeById(room, a);
+    const to = graphNodeById(room, b);
+    if (!from || !to) return;
+    const isActive = activeEdge && ((activeEdge[0] === a && activeEdge[1] === b) || (activeEdge[0] === b && activeEdge[1] === a));
+    ctx.strokeStyle = isActive ? "rgba(123, 221, 255, 0.96)" : "rgba(170, 198, 231, 0.55)";
+    ctx.lineWidth = isActive ? 10 : 5;
+    ctx.lineCap = "round";
+    ctx.beginPath();
+    ctx.moveTo(from.x, from.y);
+    ctx.lineTo(to.x, to.y);
+    ctx.stroke();
+  });
+
+  room.graph.nodes.forEach((node) => {
+    const isHubNode = node.id === hubNodeId;
+    ctx.fillStyle = isHubNode ? "#8ef7c3" : "#d9e8ff";
+    ctx.beginPath();
+    ctx.arc(node.x, node.y, 16, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = "#0b1727";
+    ctx.lineWidth = 2;
+    ctx.stroke();
+  });
+
+  if (!state.player.moveTo) {
+    const currentNode = graphNodeById(room, state.player.graphNodeId);
+    if (currentNode) {
+      const pulse = 0.38 + (Math.sin(state.pulseTime * 4) + 1) * 0.2;
+      ctx.strokeStyle = `rgba(123, 214, 255, ${pulse})`;
+      ctx.lineWidth = 7;
+      ctx.beginPath();
+      ctx.arc(currentNode.x, currentNode.y, 28, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+  }
+}
+
 function drawRoom(ctx, canvas, state) {
   const room = state.rooms[state.currentRoomId];
   const camera = state.camera;
@@ -864,6 +1122,7 @@ function drawRoom(ctx, canvas, state) {
   }
 
   drawObstacles(ctx, room);
+  drawGraphLayer(ctx, room, state);
   drawEntrances(ctx, state, room);
   drawPreviewPath(ctx, room, state);
 
@@ -898,6 +1157,7 @@ function drawRoom(ctx, canvas, state) {
   ctx.fillStyle = "#c7d9f8";
   const controlLine = room.movement === "free"
     ? room.clickMove ? "滑鼠點擊地面 / 方向鍵移動，Backspace 退出展示間" : "WASD / 方向鍵移動，Backspace 退出展示間"
+    : room.movement === "network" ? room.keyboardGraphMove ? "方向鍵或滑鼠點節點移動，僅能沿連線前進，Backspace 退出" : "滑鼠點擊節點沿網路前進，僅能在節點與連線上移動，Backspace 退出"
     : room.previewMove === "hover" ? "方向鍵建立路徑、滑鼠懸停預覽，Space / 左鍵確認移動，Backspace 退出"
       : room.previewMove === "click" ? "方向鍵建立路徑、左鍵點選/再點確認，Space 也可移動，Backspace 退出"
         : room.clickMove ? "滑鼠點擊或按住方向鍵移動，Space 結束回合，Backspace 退出" : "按住方向鍵 / WASD 持續逐格移動，Backspace 退出展示間";
@@ -928,6 +1188,7 @@ function drawOpeningShowcase(ctx, canvas, state, timestamp) {
 
 function computeSpawn(targetRoom) {
   if (targetRoom.id === "hub") return { x: targetRoom.world.width / 2, y: targetRoom.world.height - 220 };
+  if (targetRoom.movement === "network") return null;
   if (targetRoom.movement === "grid") return { x: ROOM_MARGIN + GRID_CELL_SIZE * 2.5, y: targetRoom.world.height / 2 };
   return { x: ROOM_MARGIN + 180, y: targetRoom.world.height / 2 };
 }
@@ -966,6 +1227,16 @@ function handleCanvasClick(state, event) {
   const room = state.rooms[state.currentRoomId];
   if (!room.clickMove) return;
   const point = canvasToWorld(state, event.clientX, event.clientY);
+
+  if (room.movement === "network") {
+    if (state.player.moveTo) return;
+    const targetNode = nearestGraphNode(room, point.x, point.y);
+    if (!targetNode) return;
+    const path = buildGraphPath(room, state.player.graphNodeId, targetNode.id);
+    if (path.length === 0 && targetNode.id !== state.player.graphNodeId) return;
+    state.player.graphPath = path;
+    return;
+  }
 
   if (room.movement === "free") {
     const target = resolveMovementWithObstacles(room, { x: point.x, y: point.y }, point, state.player.radius);
@@ -1017,6 +1288,8 @@ function createDemoSystem() {
     createRangeClickRoom(),
     createPreviewHoverRoom(),
     createPreviewClickRoom(),
+    createNetworkConstraintRoom(),
+    createNetworkKeyboardRoom(),
   ];
   const rooms = Object.fromEntries([createHubRoom([...showcaseRooms, openingShowcase]), ...showcaseRooms].map((room) => [room.id, room]));
   let state = null;
