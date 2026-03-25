@@ -32,6 +32,7 @@ function createRoom(id, name, world, options = {}) {
     world,
     movement: options.movement ?? "free",
     clickMove: options.clickMove ?? false,
+    keyboardGraphMove: options.keyboardGraphMove ?? false,
     rangeLimited: options.rangeLimited ?? false,
     previewMove: options.previewMove ?? null,
     entrances: options.entrances ?? [],
@@ -282,7 +283,7 @@ function createNetworkConstraintRoom() {
     [4, 5], [4, 7],
     [5, 8],
     [6, 7],
-    [7, 8], [7, 9],
+    [7, 8], [5, 9],
     [8, 9],
   ];
   const hubNode = nodes.find((node) => node.id === 9);
@@ -299,6 +300,48 @@ function createNetworkConstraintRoom() {
     }],
     graph: { nodes, edges, hubNodeId: 9 },
     notes: ["玩家初始會隨機落在任一節點上，只能沿著節點與連線行走。", "在節點上會出現光圈，行走中的連線會高亮提示。"],
+  });
+}
+
+function createNetworkKeyboardRoom() {
+  const nodes = [
+    { id: 0, x: 280, y: 220 },
+    { id: 1, x: 520, y: 180 },
+    { id: 2, x: 820, y: 260 },
+    { id: 3, x: 340, y: 510 },
+    { id: 4, x: 620, y: 460 },
+    { id: 5, x: 890, y: 560 },
+    { id: 6, x: 420, y: 830 },
+    { id: 7, x: 700, y: 760 },
+    { id: 8, x: 1040, y: 840 },
+    { id: 9, x: 1280, y: 620 },
+  ];
+  const edges = [
+    [0, 1], [0, 3],
+    [1, 2], [1, 4],
+    [2, 5],
+    [3, 4], [3, 6],
+    [4, 5], [4, 7],
+    [5, 8], [5, 9],
+    [6, 7],
+    [7, 8],
+    [8, 9],
+  ];
+  const hubNode = nodes.find((node) => node.id === 9);
+  return createRoom("network-key-room", "網狀地圖鍵盤房", { width: 1760, height: 1240 }, {
+    movement: "network",
+    clickMove: true,
+    keyboardGraphMove: true,
+    entrances: [{
+      x: hubNode.x - 78,
+      y: hubNode.y - 58,
+      width: 156,
+      height: 116,
+      target: "hub",
+      label: "返回展示間",
+    }],
+    graph: { nodes, edges, hubNodeId: 9 },
+    notes: ["沿用上一間網狀地圖並追加方向鍵移動。", "方向鍵會挑選該方向最接近的鄰接節點，路徑同樣受連線約束。"],
   });
 }
 
@@ -518,6 +561,28 @@ function nearestGraphNode(room, x, y, maxDistance = 44) {
   });
   if (best && bestDistance <= maxDistance) return best;
   return null;
+}
+
+function directionalGraphNeighbor(room, nodeId, direction) {
+  const fromNode = graphNodeById(room, nodeId);
+  if (!fromNode) return null;
+  const adjacency = buildGraphAdjacency(room);
+  const neighbors = adjacency.get(nodeId) ?? [];
+  let bestNodeId = null;
+  let bestScore = 0.35;
+  neighbors.forEach((nextId) => {
+    const nextNode = graphNodeById(room, nextId);
+    if (!nextNode) return;
+    const vx = nextNode.x - fromNode.x;
+    const vy = nextNode.y - fromNode.y;
+    const length = Math.hypot(vx, vy) || 1;
+    const dot = (vx / length) * direction.x + (vy / length) * direction.y;
+    if (dot > bestScore) {
+      bestScore = dot;
+      bestNodeId = nextId;
+    }
+  });
+  return bestNodeId;
 }
 
 function placePlayer(state, roomId, spawn = null) {
@@ -815,6 +880,13 @@ function updateNetworkPlayer(state, room, dt) {
     return;
   }
 
+  if (room.keyboardGraphMove && state.player.graphPath.length === 0) {
+    const direction = primaryDirection(state);
+    if (direction) {
+      const nextNodeId = directionalGraphNeighbor(room, state.player.graphNodeId, direction);
+      if (nextNodeId !== null) state.player.graphPath = [nextNodeId];
+    }
+  }
   if (state.player.graphPath.length === 0) return;
   const nextNodeId = state.player.graphPath.shift();
   const fromNodeId = state.player.graphNodeId;
@@ -1085,7 +1157,7 @@ function drawRoom(ctx, canvas, state) {
   ctx.fillStyle = "#c7d9f8";
   const controlLine = room.movement === "free"
     ? room.clickMove ? "滑鼠點擊地面 / 方向鍵移動，Backspace 退出展示間" : "WASD / 方向鍵移動，Backspace 退出展示間"
-    : room.movement === "network" ? "滑鼠點擊節點沿網路前進，僅能在節點與連線上移動，Backspace 退出"
+    : room.movement === "network" ? room.keyboardGraphMove ? "方向鍵或滑鼠點節點移動，僅能沿連線前進，Backspace 退出" : "滑鼠點擊節點沿網路前進，僅能在節點與連線上移動，Backspace 退出"
     : room.previewMove === "hover" ? "方向鍵建立路徑、滑鼠懸停預覽，Space / 左鍵確認移動，Backspace 退出"
       : room.previewMove === "click" ? "方向鍵建立路徑、左鍵點選/再點確認，Space 也可移動，Backspace 退出"
         : room.clickMove ? "滑鼠點擊或按住方向鍵移動，Space 結束回合，Backspace 退出" : "按住方向鍵 / WASD 持續逐格移動，Backspace 退出展示間";
@@ -1217,6 +1289,7 @@ function createDemoSystem() {
     createPreviewHoverRoom(),
     createPreviewClickRoom(),
     createNetworkConstraintRoom(),
+    createNetworkKeyboardRoom(),
   ];
   const rooms = Object.fromEntries([createHubRoom([...showcaseRooms, openingShowcase]), ...showcaseRooms].map((room) => [room.id, room]));
   let state = null;
