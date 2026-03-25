@@ -55,7 +55,7 @@ function createOpeningShowcaseDemo() {
       lineGap: 44,
       columnGap: 56,
       top: 80,
-      right: 120,
+      right: null,
       color: "#f5f7ff",
     },
   };
@@ -145,7 +145,7 @@ function drawTypewriterText(ctx, canvas, elapsedMs, options = {}) {
       consumed += lineChars.length;
     });
   } else {
-    const rightEdge = config.right ?? canvas.width - 120;
+    const rightEdge = config.right ?? canvas.width - Math.max(72, config.fontSize * 1.8);
     const bottom = canvas.height - config.top;
     const usableHeight = Math.max(config.lineGap, bottom - config.top);
     const rowsPerColumn = Math.max(1, Math.floor(usableHeight / config.lineGap));
@@ -1077,7 +1077,7 @@ function createDemoSystem() {
       const key = event.key.length === 1 ? event.key.toLowerCase() : event.key;
       if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Backspace", "w", "a", "s", "d", " "].includes(key)) event.preventDefault();
       if (state.openingShowcase?.active) {
-        if (key === " ") {
+        if (!state.openingShowcase.completed && key === " ") {
           state.openingShowcase.playback.accelerating = true;
           return;
         }
