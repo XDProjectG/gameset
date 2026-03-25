@@ -7,6 +7,11 @@ const DEAD_ZONE = { x: 0.22, y: 0.18 };
 const GRID_CELL_SIZE = 72;
 const RANGE_LIMIT = 4;
 const FREE_NAV_CELL = 36;
+const TEXT_DIRECTION = Object.freeze({
+  VERTICAL_RL: "vertical-rl",
+  HORIZONTAL_LTR: "horizontal-ltr",
+});
+const OPENING_SHOWCASE_ID = "opening-showcase";
 
 function createClickObstacles() {
   return [
@@ -33,6 +38,139 @@ function createRoom(id, name, world, options = {}) {
     grid: options.grid ?? null,
     notes: options.notes ?? [],
     obstacles: options.obstacles ?? [],
+  };
+}
+
+function createOpeningShowcaseDemo() {
+  return {
+    id: OPENING_SHOWCASE_ID,
+    name: "開場逐字輸出房",
+    message: "天下大勢分久必合，合久必分。這裡展示可複用的逐字輸出函式，之後可用在劇情文本、角色對話或事件播報等場景。",
+    textOptions: {
+      speed: 80,
+      gradient: true,
+      direction: TEXT_DIRECTION.VERTICAL_RL,
+      font: "'Noto Serif TC', 'Noto Sans TC', serif",
+      fontSize: 38,
+      lineGap: 44,
+      columnGap: 56,
+      top: 80,
+      right: null,
+      color: "#f5f7ff",
+    },
+  };
+}
+
+function normalizeTextLayoutOptions(options = {}) {
+  return {
+    text: options.text ?? "",
+    speed: options.speed ?? 80,
+    gradient: options.gradient ?? true,
+    direction: options.direction ?? TEXT_DIRECTION.VERTICAL_RL,
+    font: options.font ?? "'Noto Sans TC', sans-serif",
+    fontSize: options.fontSize ?? 34,
+    lineGap: options.lineGap ?? 40,
+    columnGap: options.columnGap ?? options.lineGap ?? 40,
+    color: options.color ?? "#f5f7ff",
+    top: options.top ?? 80,
+    right: options.right ?? null,
+    left: options.left ?? 90,
+    maxWidth: options.maxWidth ?? 820,
+  };
+}
+
+function updateTypewriterPlayback(playback, timestamp) {
+  if (!playback) return 0;
+  if (!playback.startedAt) {
+    playback.startedAt = timestamp;
+    playback.lastTickAt = timestamp;
+    playback.elapsed = 0;
+    return 0;
+  }
+  const delta = Math.max(0, timestamp - playback.lastTickAt);
+  const rate = playback.accelerating ? playback.accelerationRate : 1;
+  playback.elapsed += delta * rate;
+  playback.lastTickAt = timestamp;
+  return playback.elapsed;
+}
+
+function buildHorizontalLines(ctx, text, maxWidth) {
+  const lines = [];
+  let current = "";
+  [...text].forEach((char) => {
+    const candidate = current + char;
+    if (ctx.measureText(candidate).width > maxWidth && current.length > 0) {
+      lines.push(current);
+      current = char;
+      return;
+    }
+    current = candidate;
+  });
+  if (current.length > 0) lines.push(current);
+  return lines;
+}
+
+function drawTypewriterText(ctx, canvas, elapsedMs, options = {}) {
+  const config = normalizeTextLayoutOptions(options);
+  const chars = [...config.text];
+  const speed = Math.max(1, config.speed);
+  const shownCount = Math.min(chars.length, Math.floor(elapsedMs / speed));
+  const fadeWindow = 6;
+
+  ctx.save();
+  ctx.font = `${config.fontSize}px ${config.font}`;
+  ctx.textBaseline = "top";
+
+  if (config.direction === TEXT_DIRECTION.HORIZONTAL_LTR) {
+    const lines = buildHorizontalLines(ctx, config.text, config.maxWidth);
+    const visibleChars = [...config.text].slice(0, shownCount);
+    let consumed = 0;
+    ctx.textAlign = "left";
+    lines.forEach((line, row) => {
+      const lineChars = [...line];
+      const showInLine = Math.max(0, Math.min(lineChars.length, visibleChars.length - consumed));
+      if (showInLine <= 0) {
+        consumed += lineChars.length;
+        return;
+      }
+      const y = config.top + row * config.lineGap;
+      const textToDraw = lineChars.slice(0, showInLine).join("");
+      if (config.gradient) {
+        const alpha = Math.max(0.25, Math.min(1, (shownCount - consumed) / fadeWindow));
+        ctx.fillStyle = `rgba(245,247,255,${alpha})`;
+      } else {
+        ctx.fillStyle = config.color;
+      }
+      ctx.fillText(textToDraw, config.left, y);
+      consumed += lineChars.length;
+    });
+  } else {
+    const rightEdge = config.right ?? canvas.width - Math.max(72, config.fontSize * 1.8);
+    const bottom = canvas.height - config.top;
+    const usableHeight = Math.max(config.lineGap, bottom - config.top);
+    const rowsPerColumn = Math.max(1, Math.floor(usableHeight / config.lineGap));
+    ctx.textAlign = "center";
+    chars.forEach((char, index) => {
+      if (index >= shownCount) return;
+      const column = Math.floor(index / rowsPerColumn);
+      const row = index % rowsPerColumn;
+      const x = rightEdge - column * config.columnGap;
+      const y = config.top + row * config.lineGap;
+      if (config.gradient) {
+        const alpha = shownCount >= chars.length ? 1 : Math.max(0.2, Math.min(1, (shownCount - index) / fadeWindow));
+        ctx.fillStyle = `rgba(245,247,255,${alpha})`;
+      } else {
+        ctx.fillStyle = config.color;
+      }
+      ctx.fillText(char, x, y);
+    });
+  }
+
+  ctx.restore();
+  return {
+    shownCount,
+    totalCount: chars.length,
+    completed: shownCount >= chars.length,
   };
 }
 
@@ -241,6 +379,7 @@ function createState(canvas, rooms) {
     running: false,
     frameId: null,
     canvas,
+    openingShowcase: null,
   };
 }
 
@@ -769,6 +908,24 @@ function drawRoom(ctx, canvas, state) {
   if (room.previewMove) ctx.fillText(`預覽步數：${state.player.previewPath.length}｜按 Space 依路徑移動`, 36, 196);
 }
 
+function drawOpeningShowcase(ctx, canvas, state, timestamp) {
+  const opening = state.openingShowcase;
+  if (!opening?.active || !opening.config) return;
+  const elapsed = updateTypewriterPlayback(opening.playback, timestamp);
+
+  ctx.fillStyle = "#000";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  const result = drawTypewriterText(ctx, canvas, elapsed, opening.config);
+  opening.completed = result.completed;
+
+  ctx.textAlign = "center";
+  ctx.textBaseline = "alphabetic";
+  ctx.font = "16px 'Noto Sans TC', sans-serif";
+  ctx.fillStyle = "rgba(220,228,240,0.9)";
+  const hint = opening.completed ? "文字播放完成，按任意鍵返回展示間入口" : "文字播放中...";
+  ctx.fillText(hint, canvas.width / 2, canvas.height - 40);
+}
+
 function computeSpawn(targetRoom) {
   if (targetRoom.id === "hub") return { x: targetRoom.world.width / 2, y: targetRoom.world.height - 220 };
   if (targetRoom.movement === "grid") return { x: ROOM_MARGIN + GRID_CELL_SIZE * 2.5, y: targetRoom.world.height / 2 };
@@ -776,9 +933,26 @@ function computeSpawn(targetRoom) {
 }
 
 function tryTransitions(state) {
+  if (state.openingShowcase?.active) return;
   const room = state.rooms[state.currentRoomId];
   const entrance = room.entrances.find((item) => rectContains(item, state.player.x, state.player.y));
   if (!entrance) return;
+  if (entrance.target === OPENING_SHOWCASE_ID) {
+    state.openingShowcase = {
+      active: true,
+      enteredAt: performance.now(),
+      completed: false,
+      config: state.openingShowcase?.config ?? null,
+      playback: {
+        startedAt: 0,
+        lastTickAt: 0,
+        elapsed: 0,
+        accelerationRate: state.openingShowcase?.playback?.accelerationRate ?? 3,
+        accelerating: false,
+      },
+    };
+    return;
+  }
   const targetRoom = state.rooms[entrance.target];
   placePlayer(state, entrance.target, computeSpawn(targetRoom));
 }
@@ -833,6 +1007,7 @@ function handleCanvasClick(state, event) {
 }
 
 function createDemoSystem() {
+  const openingShowcase = createOpeningShowcaseDemo();
   const showcaseRooms = [
     createMovementDemoRoom(),
     createGridMovementRoom(),
@@ -843,7 +1018,7 @@ function createDemoSystem() {
     createPreviewHoverRoom(),
     createPreviewClickRoom(),
   ];
-  const rooms = Object.fromEntries([createHubRoom(showcaseRooms), ...showcaseRooms].map((room) => [room.id, room]));
+  const rooms = Object.fromEntries([createHubRoom([...showcaseRooms, openingShowcase]), ...showcaseRooms].map((room) => [room.id, room]));
   let state = null;
   let cleanup = [];
   let onExit = null;
@@ -852,11 +1027,15 @@ function createDemoSystem() {
     if (!state?.running) return;
     const dt = Math.min(0.033, (timestamp - state.lastTime) / 1000 || 0);
     state.lastTime = timestamp;
-    state.pulseTime += dt;
-    updatePlayer(state, dt);
-    updateCamera(state);
-    tryTransitions(state);
-    drawRoom(state.canvas.getContext("2d"), state.canvas, state);
+    if (!state.openingShowcase?.active) {
+      state.pulseTime += dt;
+      updatePlayer(state, dt);
+      updateCamera(state);
+      tryTransitions(state);
+      drawRoom(state.canvas.getContext("2d"), state.canvas, state);
+    } else {
+      drawOpeningShowcase(state.canvas.getContext("2d"), state.canvas, state, timestamp);
+    }
     state.previousKeys = new Set(state.keys);
     state.frameId = requestAnimationFrame(loop);
   }
@@ -874,6 +1053,22 @@ function createDemoSystem() {
     stop();
     onExit = exitHandler;
     state = createState(canvas, rooms);
+    state.openingShowcase = {
+      active: false,
+      enteredAt: 0,
+      completed: false,
+      config: {
+        text: openingShowcase.message,
+        ...openingShowcase.textOptions,
+      },
+      playback: {
+        startedAt: 0,
+        lastTickAt: 0,
+        elapsed: 0,
+        accelerationRate: 3,
+        accelerating: false,
+      },
+    };
     placePlayer(state, "hub", { x: rooms.hub.world.width / 2, y: rooms.hub.world.height - 220 });
     state.running = true;
     state.lastTime = performance.now();
@@ -881,6 +1076,22 @@ function createDemoSystem() {
     const handleKeyDown = (event) => {
       const key = event.key.length === 1 ? event.key.toLowerCase() : event.key;
       if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Backspace", "w", "a", "s", "d", " "].includes(key)) event.preventDefault();
+      if (state.openingShowcase?.active) {
+        if (!state.openingShowcase.completed && key === " ") {
+          state.openingShowcase.playback.accelerating = true;
+          return;
+        }
+        if (!state.openingShowcase.completed) return;
+        state.openingShowcase.active = false;
+        state.openingShowcase.enteredAt = 0;
+        state.openingShowcase.completed = false;
+        state.openingShowcase.playback.startedAt = 0;
+        state.openingShowcase.playback.lastTickAt = 0;
+        state.openingShowcase.playback.elapsed = 0;
+        state.openingShowcase.playback.accelerating = false;
+        placePlayer(state, "hub", { x: rooms.hub.world.width / 2, y: rooms.hub.world.height - 220 });
+        return;
+      }
       if (key === "Backspace") {
         stop();
         onExit?.();
@@ -920,6 +1131,7 @@ function createDemoSystem() {
 
     const handleKeyUp = (event) => {
       const key = event.key.length === 1 ? event.key.toLowerCase() : event.key;
+      if (state?.openingShowcase?.active && key === " ") state.openingShowcase.playback.accelerating = false;
       state?.keys.delete(key);
     };
 
@@ -932,11 +1144,13 @@ function createDemoSystem() {
 
     const handleClick = (event) => {
       if (!state) return;
+      if (state.openingShowcase?.active) return;
       handleCanvasClick(state, event);
     };
 
     const handleMouseMove = (event) => {
       if (!state) return;
+      if (state.openingShowcase?.active) return;
       const room = state.rooms[state.currentRoomId];
       if (room.previewMove !== "hover" || state.player.moveTo || state.player.pathQueue.length > 0) return;
       const point = canvasToWorld(state, event.clientX, event.clientY);
