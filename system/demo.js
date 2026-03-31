@@ -451,16 +451,25 @@ function createNetworkKeyboardRoom() {
 }
 
 function createHubRoom(rooms) {
-  const world = { width: 2160, height: 1480 };
-  const startX = 360;
-  const startY = 320;
+  const cardWidth = 210;
+  const cardHeight = 138;
   const gapX = 280;
   const gapY = 220;
+  const columns = Math.max(3, Math.ceil(Math.sqrt(rooms.length)));
+  const rows = Math.max(1, Math.ceil(rooms.length / columns));
+  const startX = 280;
+  const startY = 260;
+  const sidePadding = 280;
+  const bottomPadding = 420;
+  const world = {
+    width: startX + (columns - 1) * gapX + cardWidth + sidePadding,
+    height: startY + (rows - 1) * gapY + cardHeight + bottomPadding,
+  };
   const entrances = rooms.map((room, index) => ({
-    x: startX + (index % 3) * gapX,
-    y: startY + Math.floor(index / 3) * gapY,
-    width: 210,
-    height: 138,
+    x: startX + (index % columns) * gapX,
+    y: startY + Math.floor(index / columns) * gapY,
+    width: cardWidth,
+    height: cardHeight,
     target: room.id,
     label: room.name,
   }));
@@ -1663,7 +1672,7 @@ function drawOpeningShowcase(ctx, canvas, state, timestamp) {
 }
 
 function computeSpawn(targetRoom) {
-  if (targetRoom.id === "hub") return { x: targetRoom.world.width / 2, y: targetRoom.world.height - 220 };
+  if (targetRoom.id === "hub") return { x: targetRoom.world.width / 2, y: targetRoom.world.height - 140 };
   if (targetRoom.movement === "network") return null;
   if (targetRoom.movement === "grid") return { x: ROOM_MARGIN + GRID_CELL_SIZE * 2.5, y: targetRoom.world.height / 2 };
   return { x: ROOM_MARGIN + 180, y: targetRoom.world.height / 2 };
