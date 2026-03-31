@@ -7,6 +7,21 @@ const DEAD_ZONE = { x: 0.22, y: 0.18 };
 const GRID_CELL_SIZE = 72;
 const RANGE_LIMIT = 4;
 const FREE_NAV_CELL = 36;
+const DEFAULT_TURN_BUDGET = RANGE_LIMIT;
+const FREE_SPRINT_DEFAULTS = Object.freeze({
+  baseSpeed: PLAYER_SPEED,
+  mass: 1,
+  acceleration: 860,
+  deceleration: 940,
+  speedTiers: [1, 1.14, 1.42, 1.75],
+  staminaMax: 100,
+  staminaRegenPerSecond: 10,
+  staminaDrainPerSecond: [0, 9, 14, 21],
+});
+const TERRAIN_TYPES = Object.freeze({
+  GARDEN: "garden",
+  SAND: "sand",
+});
 const TEXT_DIRECTION = Object.freeze({
   VERTICAL_RL: "vertical-rl",
   HORIZONTAL_LTR: "horizontal-ltr",
@@ -38,6 +53,10 @@ function createRoom(id, name, world, options = {}) {
     entrances: options.entrances ?? [],
     grid: options.grid ?? null,
     graph: options.graph ?? null,
+    sprint: options.sprint ?? null,
+    terrainZones: options.terrainZones ?? [],
+    terrainMovementCosts: options.terrainMovementCosts ?? null,
+    rangeBudget: options.rangeBudget ?? DEFAULT_TURN_BUDGET,
     notes: options.notes ?? [],
     obstacles: options.obstacles ?? [],
   };
@@ -184,6 +203,35 @@ function createMovementDemoRoom() {
   });
 }
 
+function createSprintDemoRoom() {
+  return createRoom("free-sprint-room", "自由快跑房", { width: 1680, height: 1180 }, {
+    movement: "free",
+    sprint: { ...FREE_SPRINT_DEFAULTS },
+    entrances: [{ x: 1160, y: 880, width: 160, height: 120, target: "hub", label: "返回展示間" }],
+    notes: ["沿用自由走動房並追加 Shift 三段快跑與耐力表。", "速度切換會透過加速度平滑過渡，耐力歸零時自動回到走路。"],
+  });
+}
+
+function createSprintTerrainRoom() {
+  const terrainZones = [
+    { type: TERRAIN_TYPES.GARDEN, x: ROOM_MARGIN + 110, y: 180, width: 300, height: 320 },
+    { type: TERRAIN_TYPES.SAND, x: ROOM_MARGIN + 110, y: 610, width: 300, height: 320 },
+  ];
+  return createRoom("free-sprint-terrain-room", "快跑地形阻力房", { width: 1680, height: 1180 }, {
+    movement: "free",
+    sprint: {
+      ...FREE_SPRINT_DEFAULTS,
+      terrainResistance: {
+        [TERRAIN_TYPES.GARDEN]: { mode: "constant", drag: 320, accelerationScale: 0.82, runningSpeedScale: 0.78, walkingSpeedScale: 0.92 },
+        [TERRAIN_TYPES.SAND]: { mode: "speedScaled", linear: 0.85, quadratic: 0.0045, base: 40, accelerationScale: 0.62, runningSpeedScale: 0.58, walkingSpeedScale: 0.9 },
+      },
+    },
+    terrainZones,
+    entrances: [{ x: 1160, y: 880, width: 160, height: 120, target: "hub", label: "返回展示間" }],
+    notes: ["左側花圃為均勻阻力減速，沙地速度越快阻力越強。", "慢速走路通過沙地只會感到輕微減速。"],
+  });
+}
+
 function createGridMovementRoom() {
   return createRoom("grid-room", "方格移動房", { width: 1728, height: 1224 }, {
     movement: "grid",
@@ -246,6 +294,29 @@ function createPreviewHoverRoom() {
     grid: { cellSize: GRID_CELL_SIZE },
     obstacles: createClickObstacles(),
     notes: ["方向鍵只會建立暫時路徑；按下 Space 後才會依箭頭路徑移動。", "滑鼠移到可達格子上也會顯示路徑，左鍵可直接確認並開始移動。"],
+  });
+}
+
+function createPreviewTerrainCostRoom() {
+  const terrainZones = [
+    { type: TERRAIN_TYPES.GARDEN, x: ROOM_MARGIN + GRID_CELL_SIZE * 2, y: ROOM_MARGIN + GRID_CELL_SIZE * 3, width: GRID_CELL_SIZE * 4, height: GRID_CELL_SIZE * 5 },
+    { type: TERRAIN_TYPES.SAND, x: ROOM_MARGIN + GRID_CELL_SIZE * 8, y: ROOM_MARGIN + GRID_CELL_SIZE * 3, width: GRID_CELL_SIZE * 4, height: GRID_CELL_SIZE * 5 },
+  ];
+  return createRoom("preview-terrain-cost-room", "預覽地形耗力房", { width: 1728, height: 1224 }, {
+    movement: "grid",
+    clickMove: true,
+    rangeLimited: true,
+    previewMove: "hover",
+    rangeBudget: 4,
+    terrainZones,
+    terrainMovementCosts: {
+      [TERRAIN_TYPES.GARDEN]: 2,
+      [TERRAIN_TYPES.SAND]: 3,
+    },
+    entrances: [{ x: 1224, y: 792, width: GRID_CELL_SIZE * 2, height: GRID_CELL_SIZE * 2, target: "hub", label: "返回展示間" }],
+    grid: { cellSize: GRID_CELL_SIZE },
+    obstacles: createClickObstacles(),
+    notes: ["沿用預覽路徑方格房，花圃每格消耗 2 點、沙地每格消耗 3 點移動力。", "可走範圍與預覽路徑會依地形消耗同步更新。"],
   });
 }
 
@@ -374,6 +445,17 @@ function rectContains(rect, x, y) {
   return x >= rect.x && x <= rect.x + rect.width && y >= rect.y && y <= rect.y + rect.height;
 }
 
+function terrainAtPoint(room, x, y) {
+  return room.terrainZones.find((zone) => rectContains(zone, x, y)) ?? null;
+}
+
+function movementCostForCell(room, gridX, gridY) {
+  const world = gridToWorld(room, gridX, gridY);
+  const terrain = terrainAtPoint(room, world.x, world.y);
+  if (!terrain) return 1;
+  return room.terrainMovementCosts?.[terrain.type] ?? 1;
+}
+
 function gridMetrics(room) {
   const cellSize = room.grid.cellSize;
   return {
@@ -457,11 +539,15 @@ function createState(canvas, rooms) {
       graphNodeId: null,
       graphPath: [],
       graphActiveEdge: null,
+      velocityX: 0,
+      velocityY: 0,
+      sprintTier: 0,
+      stamina: FREE_SPRINT_DEFAULTS.staminaMax,
     },
     camera: { x: 0, y: 0 },
     keys: new Set(),
     previousKeys: new Set(),
-    turn: { budget: RANGE_LIMIT, originX: 0, originY: 0 },
+    turn: { budget: DEFAULT_TURN_BUDGET, originX: 0, originY: 0 },
     pulseTime: 0,
     lastTime: 0,
     running: false,
@@ -491,8 +577,8 @@ function resetMotionState(state) {
   clearPreviewPath(state);
 }
 
-function resetTurnBudget(state) {
-  state.turn.budget = RANGE_LIMIT;
+function resetTurnBudget(state, room = state.rooms[state.currentRoomId]) {
+  state.turn.budget = room?.rangeBudget ?? DEFAULT_TURN_BUDGET;
   state.turn.originX = state.player.gridX;
   state.turn.originY = state.player.gridY;
 }
@@ -505,7 +591,7 @@ function syncGridPosition(state, room) {
   state.player.x = snapped.x;
   state.player.y = snapped.y;
   resetMotionState(state);
-  if (room.rangeLimited) resetTurnBudget(state);
+  if (room.rangeLimited) resetTurnBudget(state, room);
 }
 
 function graphNodeById(room, nodeId) {
@@ -611,7 +697,12 @@ function placePlayer(state, roomId, spawn = null) {
     state.player.y = resolved.y;
   }
 
-  if (!room.rangeLimited) state.turn.budget = RANGE_LIMIT;
+  state.player.velocityX = 0;
+  state.player.velocityY = 0;
+  state.player.sprintTier = 0;
+  state.player.stamina = room.sprint?.staminaMax ?? FREE_SPRINT_DEFAULTS.staminaMax;
+
+  if (!room.rangeLimited) state.turn.budget = room.rangeBudget ?? DEFAULT_TURN_BUDGET;
   state.camera.x = clamp(state.player.x - state.canvas.width / 2, 0, Math.max(0, room.world.width - state.canvas.width));
   state.camera.y = clamp(state.player.y - state.canvas.height / 2, 0, Math.max(0, room.world.height - state.canvas.height));
 }
@@ -639,6 +730,7 @@ function reachableCells(room, state) {
   visited.set(`${state.turn.originX},${state.turn.originY}`, 0);
 
   while (queue.length > 0) {
+    queue.sort((a, b) => a.cost - b.cost);
     const current = queue.shift();
     const neighbors = [
       { x: current.x + 1, y: current.y },
@@ -648,7 +740,7 @@ function reachableCells(room, state) {
     ];
     neighbors.forEach((next) => {
       if (next.x < 0 || next.y < 0 || next.x >= metrics.columns || next.y >= metrics.rows) return;
-      const nextCost = current.cost + 1;
+      const nextCost = current.cost + movementCostForCell(room, next.x, next.y);
       const key = `${next.x},${next.y}`;
       const world = gridToWorld(room, next.x, next.y);
       if (nextCost > state.turn.budget || pointBlocked(room, world.x, world.y, state.player.radius)) return;
@@ -670,10 +762,12 @@ function buildGridPath(room, fromX, fromY, toX, toY, allowedSet = null) {
   const metrics = gridMetrics(room);
   const startKey = `${fromX},${fromY}`;
   const goalKey = `${toX},${toY}`;
-  const queue = [{ x: fromX, y: fromY }];
+  const queue = [{ x: fromX, y: fromY, cost: 0 }];
   const cameFrom = new Map([[startKey, null]]);
+  const bestCost = new Map([[startKey, 0]]);
 
   while (queue.length > 0) {
+    queue.sort((a, b) => a.cost - b.cost);
     const current = queue.shift();
     if (`${current.x},${current.y}` === goalKey) break;
     const neighbors = [
@@ -686,10 +780,13 @@ function buildGridPath(room, fromX, fromY, toX, toY, allowedSet = null) {
       if (next.x < 0 || next.y < 0 || next.x >= metrics.columns || next.y >= metrics.rows) return;
       const key = `${next.x},${next.y}`;
       const world = gridToWorld(room, next.x, next.y);
-      if (cameFrom.has(key) || pointBlocked(room, world.x, world.y, PLAYER_RADIUS)) return;
+      if (pointBlocked(room, world.x, world.y, PLAYER_RADIUS)) return;
       if (allowedSet && !allowedSet.has(key)) return;
-      cameFrom.set(key, current);
-      queue.push(next);
+      const nextCost = current.cost + movementCostForCell(room, next.x, next.y);
+      if (bestCost.has(key) && bestCost.get(key) <= nextCost) return;
+      bestCost.set(key, nextCost);
+      cameFrom.set(key, { x: current.x, y: current.y });
+      queue.push({ x: next.x, y: next.y, cost: nextCost });
     });
   }
 
@@ -748,7 +845,7 @@ function commitPreviewPath(state) {
   if (state.player.previewPath.length === 0) {
     if (state.player.previewTarget.gridX !== state.player.gridX || state.player.previewTarget.gridY !== state.player.gridY) return false;
     clearPreviewPath(state);
-    resetTurnBudget(state);
+    resetTurnBudget(state, state.rooms[state.currentRoomId]);
     return true;
   }
   state.player.pathQueue = state.player.previewPath.map((step) => ({ ...step }));
@@ -818,10 +915,63 @@ function updateFreePlayer(state, room, dt) {
   }
 
   const direction = freeDirection(state);
-  if (!direction) return;
-  const length = Math.hypot(direction.x, direction.y) || 1;
-  const next = { x: state.player.x + (direction.x / length) * PLAYER_SPEED * dt, y: state.player.y + (direction.y / length) * PLAYER_SPEED * dt };
+  const sprint = room.sprint;
+  if (!sprint) {
+    if (!direction) return;
+    const length = Math.hypot(direction.x, direction.y) || 1;
+    const next = { x: state.player.x + (direction.x / length) * PLAYER_SPEED * dt, y: state.player.y + (direction.y / length) * PLAYER_SPEED * dt };
+    const resolved = resolveMovementWithObstacles(room, { x: state.player.x, y: state.player.y }, next, state.player.radius);
+    state.player.x = resolved.x;
+    state.player.y = resolved.y;
+    return;
+  }
+
+  const movingByInput = Boolean(direction);
+  if (state.player.sprintTier > 0 && movingByInput) {
+    const drain = sprint.staminaDrainPerSecond[state.player.sprintTier] ?? 0;
+    state.player.stamina = Math.max(0, state.player.stamina - drain * dt);
+    if (state.player.stamina <= 0) state.player.sprintTier = 0;
+  } else {
+    state.player.stamina = Math.min(sprint.staminaMax, state.player.stamina + sprint.staminaRegenPerSecond * dt);
+  }
+
+  const terrain = terrainAtPoint(room, state.player.x, state.player.y);
+  const terrainResistance = terrain ? sprint.terrainResistance?.[terrain.type] : null;
+  const terrainSpeedScale = terrainResistance
+    ? (state.player.sprintTier > 0 ? terrainResistance.runningSpeedScale : terrainResistance.walkingSpeedScale) ?? 1
+    : 1;
+  const length = direction ? Math.hypot(direction.x, direction.y) || 1 : 0;
+  const desiredSpeed = direction ? sprint.baseSpeed * (sprint.speedTiers[state.player.sprintTier] ?? 1) * terrainSpeedScale : 0;
+  const desiredVx = direction ? (direction.x / length) * desiredSpeed : 0;
+  const desiredVy = direction ? (direction.y / length) * desiredSpeed : 0;
+  const dvx = desiredVx - state.player.velocityX;
+  const dvy = desiredVy - state.player.velocityY;
+  const accelScale = terrainResistance?.accelerationScale ?? 1;
+  const accel = (desiredSpeed > 0 ? sprint.acceleration : sprint.deceleration) * accelScale;
+  const maxDeltaV = (accel / Math.max(0.01, sprint.mass)) * dt;
+  const deltaMag = Math.hypot(dvx, dvy);
+  const ratio = deltaMag > maxDeltaV ? maxDeltaV / deltaMag : 1;
+  state.player.velocityX += dvx * ratio;
+  state.player.velocityY += dvy * ratio;
+
+  if (terrainResistance) {
+    const resistance = terrainResistance;
+    const speed = Math.hypot(state.player.velocityX, state.player.velocityY);
+    if (speed > 0.001) {
+      const drag = resistance.mode === "speedScaled"
+        ? (resistance.base ?? 0) + speed * (resistance.linear ?? 0) + speed * speed * (resistance.quadratic ?? 0)
+        : resistance.drag ?? 0;
+      const speedLoss = Math.min(speed, (drag / Math.max(0.01, sprint.mass)) * dt);
+      const remain = (speed - speedLoss) / speed;
+      state.player.velocityX *= remain;
+      state.player.velocityY *= remain;
+    }
+  }
+
+  const next = { x: state.player.x + state.player.velocityX * dt, y: state.player.y + state.player.velocityY * dt };
   const resolved = resolveMovementWithObstacles(room, { x: state.player.x, y: state.player.y }, next, state.player.radius);
+  if (resolved.x === state.player.x) state.player.velocityX = 0;
+  if (resolved.y === state.player.y) state.player.velocityY = 0;
   state.player.x = resolved.x;
   state.player.y = resolved.y;
 }
@@ -840,8 +990,7 @@ function updateGridPlayer(state, room, dt) {
       state.player.moveFrom = null;
       state.player.moveTo = null;
       state.player.moveProgress = 0;
-      if (room.rangeLimited) state.turn.budget = RANGE_LIMIT;
-      if (room.previewMove && state.player.pathQueue.length === 0) resetTurnBudget(state);
+      if (room.previewMove && state.player.pathQueue.length === 0) resetTurnBudget(state, room);
     }
     return;
   }
@@ -1121,6 +1270,16 @@ function drawRoom(ctx, canvas, state) {
     }
   }
 
+  room.terrainZones.forEach((zone) => {
+    if (zone.type === TERRAIN_TYPES.GARDEN) ctx.fillStyle = "rgba(108, 168, 96, 0.42)";
+    else if (zone.type === TERRAIN_TYPES.SAND) ctx.fillStyle = "rgba(206, 176, 106, 0.42)";
+    else ctx.fillStyle = "rgba(150,150,150,0.3)";
+    ctx.fillRect(zone.x, zone.y, zone.width, zone.height);
+    ctx.strokeStyle = "rgba(225,235,255,0.35)";
+    ctx.lineWidth = 2;
+    ctx.strokeRect(zone.x, zone.y, zone.width, zone.height);
+  });
+
   drawObstacles(ctx, room);
   drawGraphLayer(ctx, room, state);
   drawEntrances(ctx, state, room);
@@ -1156,7 +1315,7 @@ function drawRoom(ctx, canvas, state) {
   ctx.font = "15px 'Noto Sans TC', sans-serif";
   ctx.fillStyle = "#c7d9f8";
   const controlLine = room.movement === "free"
-    ? room.clickMove ? "滑鼠點擊地面 / 方向鍵移動，Backspace 退出展示間" : "WASD / 方向鍵移動，Backspace 退出展示間"
+    ? room.sprint ? "WASD / 方向鍵移動，Shift 切換快跑檔位，Backspace 退出展示間" : room.clickMove ? "滑鼠點擊地面 / 方向鍵移動，Backspace 退出展示間" : "WASD / 方向鍵移動，Backspace 退出展示間"
     : room.movement === "network" ? room.keyboardGraphMove ? "方向鍵或滑鼠點節點移動，僅能沿連線前進，Backspace 退出" : "滑鼠點擊節點沿網路前進，僅能在節點與連線上移動，Backspace 退出"
     : room.previewMove === "hover" ? "方向鍵建立路徑、滑鼠懸停預覽，Space / 左鍵確認移動，Backspace 退出"
       : room.previewMove === "click" ? "方向鍵建立路徑、左鍵點選/再點確認，Space 也可移動，Backspace 退出"
@@ -1166,6 +1325,57 @@ function drawRoom(ctx, canvas, state) {
   if (room.movement === "grid") ctx.fillText(`目前格位：(${state.player.gridX}, ${state.player.gridY})`, 36, room.rangeLimited ? 152 : 130);
   if (room.rangeLimited) ctx.fillText(`本次移動起點：(${state.turn.originX}, ${state.turn.originY})｜移動力上限 ${state.turn.budget}`, 36, 174);
   if (room.previewMove) ctx.fillText(`預覽步數：${state.player.previewPath.length}｜按 Space 依路徑移動`, 36, 196);
+
+  if (room.sprint) {
+    const gaugeX = 26;
+    const gaugeY = canvas.height - 170;
+    const gaugeW = 170;
+    const gaugeH = 132;
+    const staminaRatio = clamp(state.player.stamina / room.sprint.staminaMax, 0, 1);
+    ctx.fillStyle = "rgba(10,16,26,0.78)";
+    ctx.fillRect(gaugeX, gaugeY, gaugeW, gaugeH);
+    ctx.strokeStyle = "rgba(191,212,242,0.45)";
+    ctx.strokeRect(gaugeX, gaugeY, gaugeW, gaugeH);
+    const barX = gaugeX + 12;
+    const barY = gaugeY + 18;
+    const barH = gaugeH - 32;
+    ctx.fillStyle = "rgba(32,44,60,0.92)";
+    ctx.fillRect(barX, barY, 16, barH);
+    ctx.fillStyle = staminaRatio > 0.2 ? "#78e08f" : "#ff8f8f";
+    ctx.fillRect(barX, barY + (1 - staminaRatio) * barH, 16, barH * staminaRatio);
+    ctx.fillStyle = "#d7e7ff";
+    ctx.font = "13px 'Noto Sans TC', sans-serif";
+    ctx.fillText("耐力", barX - 2, gaugeY + gaugeH - 4);
+
+    const speedBarX = gaugeX + 62;
+    const speedBarY = gaugeY + 24;
+    const segmentH = 24;
+    const baseW = 46;
+    const topGrow = 12;
+    ["快", "中", "慢"].forEach((label, order) => {
+      const tier = 3 - order;
+      const active = state.player.sprintTier >= tier;
+      const y = speedBarY + order * (segmentH + 6);
+      const topW = baseW + topGrow * tier;
+      const bottomW = baseW + topGrow * Math.max(0, tier - 1);
+      const leftTop = speedBarX - topW / 2;
+      const leftBottom = speedBarX - bottomW / 2;
+      ctx.beginPath();
+      ctx.moveTo(leftTop, y);
+      ctx.lineTo(leftTop + topW, y);
+      ctx.lineTo(leftBottom + bottomW, y + segmentH);
+      ctx.lineTo(leftBottom, y + segmentH);
+      ctx.closePath();
+      ctx.fillStyle = active ? "#ffe98a" : "rgba(130,145,170,0.35)";
+      ctx.fill();
+      ctx.strokeStyle = "rgba(240,247,255,0.6)";
+      ctx.stroke();
+      ctx.fillStyle = "#dce9ff";
+      ctx.fillText(label, speedBarX + 42, y + 16);
+    });
+    ctx.fillStyle = "#bfd6f7";
+    ctx.fillText("Shift 切換檔位", gaugeX + 56, gaugeY + 18);
+  }
 }
 
 function drawOpeningShowcase(ctx, canvas, state, timestamp) {
@@ -1281,12 +1491,15 @@ function createDemoSystem() {
   const openingShowcase = createOpeningShowcaseDemo();
   const showcaseRooms = [
     createMovementDemoRoom(),
+    createSprintDemoRoom(),
+    createSprintTerrainRoom(),
     createGridMovementRoom(),
     createRangeMovementRoom(),
     createFreeClickRoom(),
     createGridClickRoom(),
     createRangeClickRoom(),
     createPreviewHoverRoom(),
+    createPreviewTerrainCostRoom(),
     createPreviewClickRoom(),
     createNetworkConstraintRoom(),
     createNetworkKeyboardRoom(),
@@ -1348,7 +1561,7 @@ function createDemoSystem() {
 
     const handleKeyDown = (event) => {
       const key = event.key.length === 1 ? event.key.toLowerCase() : event.key;
-      if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Backspace", "w", "a", "s", "d", " "].includes(key)) event.preventDefault();
+      if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Backspace", "w", "a", "s", "d", " ", "Shift"].includes(key)) event.preventDefault();
       if (state.openingShowcase?.active) {
         if (!state.openingShowcase.completed && key === " ") {
           state.openingShowcase.playback.accelerating = true;
@@ -1370,6 +1583,17 @@ function createDemoSystem() {
         onExit?.();
         return;
       }
+      if (key === "Shift") {
+        const room = state.rooms[state.currentRoomId];
+        if (room.sprint) {
+          if (state.player.stamina <= 0) {
+            state.player.sprintTier = 0;
+          } else {
+            state.player.sprintTier = (state.player.sprintTier + 1) % 4;
+          }
+        }
+        return;
+      }
       if (key === " ") {
         const room = state.rooms[state.currentRoomId];
         if (room.previewMove) {
@@ -1377,7 +1601,7 @@ function createDemoSystem() {
           return;
         }
         if (room.rangeLimited && !state.player.moveTo) {
-          resetTurnBudget(state);
+          resetTurnBudget(state, room);
           clearAutoMove(state);
         }
         return;
