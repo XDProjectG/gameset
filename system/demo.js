@@ -404,7 +404,7 @@ function createSquadBattleRoom() {
     entrances: [{ x: 1224, y: 792, width: GRID_CELL_SIZE * 2, height: GRID_CELL_SIZE * 2, target: "hub", label: "返回展示間" }],
     grid: { cellSize: GRID_CELL_SIZE },
     obstacles: createClickObstacles(),
-    notes: ["我方 4 人 + 敵方 4 人共 8 人輪流移動，回合順序會在進場時隨機分配。", "敵我互相踩到會觸發隨機戰鬥，敗者強制離場；若玩家戰敗，會立即返回 Hub。"],
+    notes: ["我方 4 人 + 敵方 4 人共 8 人輪流移動，回合順序會在進場時隨機分配。", "敵我互相踩到會觸發戰鬥：正面 50%、側面 75%、背面 87.5% 勝率；敗者強制離場，玩家敗北會返回 Hub。"],
   });
 }
 
@@ -756,6 +756,18 @@ function updateFacingByDelta(player, dx, dy) {
   player.facingAngle = Math.atan2(dy, dx);
 }
 
+function angleDifference(a, b) {
+  return Math.abs(Math.atan2(Math.sin(a - b), Math.cos(a - b)));
+}
+
+function battleAdvantage(attacker, defender) {
+  const angleToAttacker = Math.atan2(attacker.y - defender.y, attacker.x - defender.x);
+  const facingDiff = angleDifference(defender.facingAngle, angleToAttacker);
+  if (facingDiff <= Math.PI / 4) return { key: "front", chance: 0.5, label: "正面" };
+  if (facingDiff <= (Math.PI * 3) / 4) return { key: "side", chance: 0.75, label: "側面" };
+  return { key: "back", chance: 0.875, label: "背面" };
+}
+
 function drawPlayerArrow(ctx, x, y, size, angle, fillColor) {
   const points = [
     { x: size, y: 0 },
@@ -1004,7 +1016,8 @@ function resolveSquadTurn(state, room) {
   if (room.squadBattle) {
     const opponent = squadMemberAtCell(state, active.gridX, active.gridY, active.id);
     if (opponent && opponent.team !== active.team) {
-      const winner = Math.random() < 0.5 ? active : opponent;
+      const advantage = battleAdvantage(active, opponent);
+      const winner = Math.random() < advantage.chance ? active : opponent;
       const loser = winner.id === active.id ? opponent : active;
       loser.inRoom = false;
       loser.moveFrom = null;
@@ -1019,12 +1032,12 @@ function resolveSquadTurn(state, room) {
         return;
       }
       if (winner.id !== active.id) {
-        state.squad.statusMessage = `戰鬥結果：${winner.id} 擊退 ${loser.id}。`;
+        state.squad.statusMessage = `戰鬥結果：${winner.id} 擊退 ${loser.id}（${advantage.label}突擊，勝率 ${Math.round(advantage.chance * 1000) / 10}%）。`;
         state.squad.awaitingTurnEnd = false;
         cycleToNextSquadMember(state, room);
         return;
       }
-      state.squad.statusMessage = `戰鬥結果：${winner.id} 擊退 ${loser.id}。`;
+      state.squad.statusMessage = `戰鬥結果：${winner.id} 擊退 ${loser.id}（${advantage.label}突擊，勝率 ${Math.round(advantage.chance * 1000) / 10}%）。`;
     }
   }
 
