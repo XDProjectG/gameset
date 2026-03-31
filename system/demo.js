@@ -60,6 +60,11 @@ function createRoom(id, name, world, options = {}) {
     squadBattle: options.squadBattle ?? false,
     squadPassThrough: options.squadPassThrough ?? false,
     squadPlayerExitRequiresClear: options.squadPlayerExitRequiresClear ?? true,
+    squadCompanionCount: options.squadCompanionCount ?? 3,
+    squadNpcAllyCount: options.squadNpcAllyCount ?? 0,
+    squadEnemyCount: options.squadEnemyCount ?? (options.squadBattle ? 4 : 0),
+    showRangeOverlay: options.showRangeOverlay ?? true,
+    showPreviewPath: options.showPreviewPath ?? true,
     rangeBudget: options.rangeBudget ?? DEFAULT_TURN_BUDGET,
     notes: options.notes ?? [],
     obstacles: options.obstacles ?? [],
@@ -405,6 +410,36 @@ function createSquadBattleRoom() {
     grid: { cellSize: GRID_CELL_SIZE },
     obstacles: createClickObstacles(),
     notes: ["我方 4 人 + 敵方 4 人共 8 人輪流移動，回合順序會在進場時隨機分配。", "敵我互相踩到會觸發戰鬥：正面 50%、側面 75%、背面 87.5% 勝率；敗者強制離場，玩家敗北會返回 Hub。"],
+  });
+}
+
+function createSquadBattleNpcAssistRoom() {
+  const terrainZones = [
+    { type: TERRAIN_TYPES.GARDEN, x: ROOM_MARGIN + GRID_CELL_SIZE * 2, y: ROOM_MARGIN + GRID_CELL_SIZE * 3, width: GRID_CELL_SIZE * 4, height: GRID_CELL_SIZE * 5 },
+    { type: TERRAIN_TYPES.SAND, x: ROOM_MARGIN + GRID_CELL_SIZE * 8, y: ROOM_MARGIN + GRID_CELL_SIZE * 3, width: GRID_CELL_SIZE * 4, height: GRID_CELL_SIZE * 5 },
+  ];
+  return createRoom("preview-squad-battle-npc-room", "隊伍輪替戰鬥房（NPC支援）", { width: 1728, height: 1224 }, {
+    movement: "grid",
+    clickMove: true,
+    rangeLimited: true,
+    previewMove: "hover",
+    squadRotation: true,
+    squadBattle: true,
+    squadCompanionCount: 2,
+    squadNpcAllyCount: 3,
+    squadEnemyCount: 6,
+    showRangeOverlay: false,
+    showPreviewPath: false,
+    rangeBudget: 4,
+    terrainZones,
+    terrainMovementCosts: {
+      [TERRAIN_TYPES.GARDEN]: 2,
+      [TERRAIN_TYPES.SAND]: 3,
+    },
+    entrances: [{ x: 1224, y: 792, width: GRID_CELL_SIZE * 2, height: GRID_CELL_SIZE * 2, target: "hub", label: "返回展示間" }],
+    grid: { cellSize: GRID_CELL_SIZE },
+    obstacles: createClickObstacles(),
+    notes: ["我方可操作單位為 1 位玩家 + 2 位同伴；上方另有 3 位綠色友方 NPC 由 AI 控制。", "6 位敵方會在返回點附近出現；友方與友方 NPC 需合力擊退所有敵人。"],
   });
 }
 
@@ -911,12 +946,15 @@ function initializeSquadState(state, room) {
   const metrics = gridMetrics(room);
   const baseX = state.player.gridX;
   const baseY = state.player.gridY;
+  const companionCount = room.squadCompanionCount ?? 3;
+  const npcCount = room.squadNpcAllyCount ?? 0;
+  const enemyCount = room.squadEnemyCount ?? (room.squadBattle ? 4 : 0);
   const offsets = [
     [0, 0], [-1, 0], [0, 1], [-1, 1], [1, 0], [0, -1], [-1, -1], [1, 1], [2, 0], [0, 2],
   ];
   const cells = [];
   offsets.forEach(([dx, dy]) => {
-    if (cells.length >= 4) return;
+    if (cells.length >= 1 + companionCount) return;
     const gx = clamp(baseX + dx, 0, Math.max(0, metrics.columns - 1));
     const gy = clamp(baseY + dy, 0, Math.max(0, metrics.rows - 1));
     if (cells.some((cell) => cell.gridX === gx && cell.gridY === gy)) return;
@@ -924,9 +962,9 @@ function initializeSquadState(state, room) {
     if (pointBlocked(room, world.x, world.y, state.player.radius)) return;
     cells.push({ gridX: gx, gridY: gy });
   });
-  if (cells.length < 4) {
-    for (let y = 0; y < metrics.rows && cells.length < 4; y += 1) {
-      for (let x = 0; x < metrics.columns && cells.length < 4; x += 1) {
+  if (cells.length < 1 + companionCount) {
+    for (let y = 0; y < metrics.rows && cells.length < 1 + companionCount; y += 1) {
+      for (let x = 0; x < metrics.columns && cells.length < 1 + companionCount; x += 1) {
         if (cells.some((cell) => cell.gridX === x && cell.gridY === y)) continue;
         const world = gridToWorld(room, x, y);
         if (pointBlocked(room, world.x, world.y, state.player.radius)) continue;
@@ -935,12 +973,38 @@ function initializeSquadState(state, room) {
     }
   }
 
-  const members = [
-    { ...createSquadMember("player", "player", 0, room, cells[0].gridX, cells[0].gridY), team: "ally" },
-    { ...createSquadMember("companion-1", "companion", 0, room, cells[1].gridX, cells[1].gridY), team: "ally" },
-    { ...createSquadMember("companion-2", "companion", 0, room, cells[2].gridX, cells[2].gridY), team: "ally" },
-    { ...createSquadMember("companion-3", "companion", 0, room, cells[3].gridX, cells[3].gridY), team: "ally" },
-  ];
+  const members = [{ ...createSquadMember("player", "player", 0, room, cells[0].gridX, cells[0].gridY), team: "ally", control: "player" }];
+  for (let index = 0; index < companionCount; index += 1) {
+    const cell = cells[index + 1] ?? cells[cells.length - 1];
+    members.push({ ...createSquadMember(`companion-${index + 1}`, "companion", 0, room, cell.gridX, cell.gridY), team: "ally", control: "player" });
+  }
+  if (npcCount > 0) {
+    const npcOffsets = [
+      [0, 0], [-1, 0], [1, 0], [-2, 0], [2, 0], [0, 1], [-1, 1], [1, 1],
+    ];
+    const topCenter = { gridX: Math.floor(metrics.columns / 2), gridY: 1 };
+    const npcCells = [];
+    npcOffsets.forEach(([dx, dy]) => {
+      if (npcCells.length >= npcCount) return;
+      const gx = clamp(topCenter.gridX + dx, 0, Math.max(0, metrics.columns - 1));
+      const gy = clamp(topCenter.gridY + dy, 0, Math.max(0, metrics.rows - 1));
+      if (members.some((member) => member.gridX === gx && member.gridY === gy) || npcCells.some((cell) => cell.gridX === gx && cell.gridY === gy)) return;
+      const world = gridToWorld(room, gx, gy);
+      if (pointBlocked(room, world.x, world.y, state.player.radius)) return;
+      npcCells.push({ gridX: gx, gridY: gy });
+    });
+    for (let y = 0; y < metrics.rows && npcCells.length < npcCount; y += 1) {
+      for (let x = 0; x < metrics.columns && npcCells.length < npcCount; x += 1) {
+        if (members.some((member) => member.gridX === x && member.gridY === y) || npcCells.some((cell) => cell.gridX === x && cell.gridY === y)) continue;
+        const world = gridToWorld(room, x, y);
+        if (pointBlocked(room, world.x, world.y, state.player.radius)) continue;
+        npcCells.push({ gridX: x, gridY: y });
+      }
+    }
+    npcCells.forEach((cell, index) => {
+      members.push({ ...createSquadMember(`npc-${index + 1}`, "npc", 0, room, cell.gridX, cell.gridY), team: "ally", control: "ai" });
+    });
+  }
 
   if (room.squadBattle) {
     const entrance = room.entrances.find((item) => item.target === "hub");
@@ -953,7 +1017,7 @@ function initializeSquadState(state, room) {
     ];
     const enemyCells = [];
     enemyOffsets.forEach(([dx, dy]) => {
-      if (enemyCells.length >= 4) return;
+      if (enemyCells.length >= enemyCount) return;
       const gx = clamp(entranceGrid.gridX + dx, 0, Math.max(0, metrics.columns - 1));
       const gy = clamp(entranceGrid.gridY + dy, 0, Math.max(0, metrics.rows - 1));
       if (members.some((member) => member.gridX === gx && member.gridY === gy) || enemyCells.some((cell) => cell.gridX === gx && cell.gridY === gy)) return;
@@ -961,8 +1025,8 @@ function initializeSquadState(state, room) {
       if (pointBlocked(room, world.x, world.y, state.player.radius)) return;
       enemyCells.push({ gridX: gx, gridY: gy });
     });
-    for (let y = metrics.rows - 1; y >= 0 && enemyCells.length < 4; y -= 1) {
-      for (let x = metrics.columns - 1; x >= 0 && enemyCells.length < 4; x -= 1) {
+    for (let y = metrics.rows - 1; y >= 0 && enemyCells.length < enemyCount; y -= 1) {
+      for (let x = metrics.columns - 1; x >= 0 && enemyCells.length < enemyCount; x -= 1) {
         if (members.some((member) => member.gridX === x && member.gridY === y) || enemyCells.some((cell) => cell.gridX === x && cell.gridY === y)) continue;
         const world = gridToWorld(room, x, y);
         if (pointBlocked(room, world.x, world.y, state.player.radius)) continue;
@@ -970,7 +1034,7 @@ function initializeSquadState(state, room) {
       }
     }
     enemyCells.forEach((cell, index) => {
-      members.push({ ...createSquadMember(`enemy-${index + 1}`, "enemy", 0, room, cell.gridX, cell.gridY), team: "enemy" });
+      members.push({ ...createSquadMember(`enemy-${index + 1}`, "enemy", 0, room, cell.gridX, cell.gridY), team: "enemy", control: "ai" });
     });
   }
 
@@ -1007,6 +1071,64 @@ function cycleToNextSquadMember(state, room) {
   resetTurnBudget(state, room);
 }
 
+function isPlayerControlledTurn(state, room) {
+  if (!room?.squadRotation || !state.squad) return true;
+  const active = squadActiveMember(state);
+  return active?.control !== "ai";
+}
+
+function assignAiPath(state, room, active) {
+  const opponents = state.squad.members.filter((member) => member.inRoom && member.team !== active.team);
+  if (opponents.length === 0) return false;
+  const reachable = room.rangeLimited ? reachableCells(room, state) : null;
+  const blockedSet = squadBlockedSetForMember(state, room, active, null);
+  let bestPath = null;
+  let bestDistance = Infinity;
+
+  opponents.forEach((opponent) => {
+    const goalKey = `${opponent.gridX},${opponent.gridY}`;
+    const dynamicBlocked = blockedSet ? new Set(blockedSet) : null;
+    dynamicBlocked?.delete(goalKey);
+    const path = buildGridPath(room, active.gridX, active.gridY, opponent.gridX, opponent.gridY, reachable, dynamicBlocked);
+    if (path.length === 0 && (active.gridX !== opponent.gridX || active.gridY !== opponent.gridY)) return;
+    if (!bestPath || path.length < bestPath.length) {
+      bestPath = path;
+      bestDistance = 0;
+    }
+  });
+
+  if (!bestPath) {
+    if (!reachable) return false;
+    reachable.forEach((_, key) => {
+      const [gx, gy] = key.split(",").map(Number);
+      const isOrigin = gx === active.gridX && gy === active.gridY;
+      if (isOrigin) return;
+      if (blockedSet?.has(key)) return;
+      const path = buildGridPath(room, active.gridX, active.gridY, gx, gy, reachable, blockedSet);
+      if (path.length === 0) return;
+      const minDistance = opponents.reduce((best, opponent) => Math.min(best, Math.abs(opponent.gridX - gx) + Math.abs(opponent.gridY - gy)), Infinity);
+      if (minDistance < bestDistance || (minDistance === bestDistance && (!bestPath || path.length < bestPath.length))) {
+        bestDistance = minDistance;
+        bestPath = path;
+      }
+    });
+  }
+
+  if (!bestPath) return false;
+  state.player.pathQueue = bestPath.map((step) => ({ ...step }));
+  return true;
+}
+
+function tryAutoResolveAiTurn(state, room) {
+  if (!room.squadRotation || !state.squad) return;
+  const active = squadActiveMember(state);
+  if (!active || active.control !== "ai") return;
+  if (state.squad.awaitingTurnEnd || active.moveTo || active.pathQueue.length > 0) return;
+  clearPreviewPath(state);
+  assignAiPath(state, room, active);
+  state.squad.awaitingTurnEnd = true;
+}
+
 function resolveSquadTurn(state, room) {
   if (!state.squad?.awaitingTurnEnd) return;
   const active = squadActiveMember(state);
@@ -1038,6 +1160,10 @@ function resolveSquadTurn(state, room) {
         return;
       }
       state.squad.statusMessage = `戰鬥結果：${winner.id} 擊退 ${loser.id}（${advantage.label}突擊，勝率 ${Math.round(advantage.chance * 1000) / 10}%）。`;
+    }
+    const remainingEnemies = state.squad.members.filter((member) => member.type === "enemy" && member.inRoom).length;
+    if (remainingEnemies === 0) {
+      state.squad.statusMessage = "勝利！我方與友方 NPC 已合力擊退所有敵軍。";
     }
   }
 
@@ -1469,6 +1595,7 @@ function updateNetworkPlayer(state, room, dt) {
 function updatePlayer(state, dt) {
   const room = state.rooms[state.currentRoomId];
   if (room.squadRotation && state.squad) syncPlayerFromSquad(state);
+  if (room.squadRotation && state.squad) tryAutoResolveAiTurn(state, room);
   const prevX = state.player.x;
   const prevY = state.player.y;
   if (room.movement === "grid") updateGridPlayer(state, room, dt);
@@ -1521,7 +1648,7 @@ function drawObstacles(ctx, room) {
 function drawGridOverlay(ctx, room, state) {
   if (room.movement !== "grid") return;
   const metrics = gridMetrics(room);
-  const reachable = room.rangeLimited ? reachableCells(room, state) : null;
+  const reachable = room.rangeLimited && room.showRangeOverlay ? reachableCells(room, state) : null;
 
   if (reachable) {
     const pulse = 0.28 + (Math.sin(state.pulseTime * 3) + 1) * 0.18;
@@ -1570,7 +1697,7 @@ function drawEntrances(ctx, state, room) {
 }
 
 function drawPreviewPath(ctx, room, state) {
-  if (!room.previewMove || !state.player.previewTarget) return;
+  if (!room.previewMove || room.showPreviewPath === false || !state.player.previewTarget) return;
   if (state.player.previewPath.length === 0) {
     if (state.player.previewTarget.gridX !== state.player.gridX || state.player.previewTarget.gridY !== state.player.gridY) return;
     ctx.strokeStyle = "rgba(123, 207, 255, 0.95)";
@@ -1674,7 +1801,7 @@ function drawSquadLayer(ctx, room, state) {
   }
   const active = squadActiveMember(state);
   state.squad.members.filter((member) => member.inRoom).forEach((member) => {
-    const color = member.type === "enemy" ? "#ff6b6b" : member.type === "companion" ? "#5ea8ff" : "#f3d37c";
+    const color = member.type === "enemy" ? "#ff6b6b" : member.type === "npc" ? "#50d67d" : member.type === "companion" ? "#5ea8ff" : "#f3d37c";
     drawPlayerArrow(ctx, member.x, member.y, PLAYER_RADIUS, member.facingAngle, color);
     if (active && active.id === member.id) {
       ctx.strokeStyle = "rgba(255,255,255,0.9)";
@@ -1771,19 +1898,19 @@ function drawRoom(ctx, canvas, state) {
   const controlLine = room.movement === "free"
     ? room.sprint ? "WASD / 方向鍵移動，Shift 切換快跑檔位，Backspace 退出展示間" : room.clickMove ? "滑鼠點擊地面 / 方向鍵移動，Backspace 退出展示間" : "WASD / 方向鍵移動，Backspace 退出展示間"
     : room.movement === "network" ? room.keyboardGraphMove ? "方向鍵或滑鼠點節點移動，僅能沿連線前進，Backspace 退出" : "滑鼠點擊節點沿網路前進，僅能在節點與連線上移動，Backspace 退出"
-    : room.squadRotation ? "依順序輪替移動；方向鍵/滑鼠預覽，Space 或左鍵確認路徑"
+    : room.squadRotation ? "依順序輪替移動；玩家單位可用方向鍵/滑鼠，AI 單位會自動移動"
     : room.previewMove === "hover" ? "方向鍵建立路徑、滑鼠懸停預覽，Space / 左鍵確認移動，Backspace 退出"
       : room.previewMove === "click" ? "方向鍵建立路徑、左鍵點選/再點確認，Space 也可移動，Backspace 退出"
         : room.clickMove ? "滑鼠點擊或按住方向鍵移動，Space 結束回合，Backspace 退出" : "按住方向鍵 / WASD 持續逐格移動，Backspace 退出展示間";
   ctx.fillText(controlLine, 36, 82);
   room.notes.forEach((line, index) => ctx.fillText(line, 36, 108 + index * 22));
   if (room.movement === "grid") ctx.fillText(`目前格位：(${state.player.gridX}, ${state.player.gridY})`, 36, room.rangeLimited ? 152 : 130);
-  if (room.rangeLimited) ctx.fillText(`本次移動起點：(${state.turn.originX}, ${state.turn.originY})｜移動力上限 ${state.turn.budget}`, 36, 174);
-  if (room.previewMove) ctx.fillText(`預覽步數：${state.player.previewPath.length}｜按 Space 依路徑移動`, 36, 196);
+  if (room.rangeLimited && room.showRangeOverlay) ctx.fillText(`本次移動起點：(${state.turn.originX}, ${state.turn.originY})｜移動力上限 ${state.turn.budget}`, 36, 174);
+  if (room.previewMove && room.showPreviewPath !== false) ctx.fillText(`預覽步數：${state.player.previewPath.length}｜按 Space 依路徑移動`, 36, 196);
   if (room.squadRotation && state.squad) {
     const active = squadActiveMember(state);
-    const activeLabel = active?.type === "enemy" ? `敵方 (${active.id})` : active?.type === "companion" ? `同伴 (${active.id})` : "玩家";
-    const remainingCompanions = state.squad.members.filter((member) => member.type === "companion" && member.inRoom).length;
+    const activeLabel = active?.type === "enemy" ? `敵方 (${active.id})` : active?.type === "npc" ? `友方NPC (${active.id})` : active?.type === "companion" ? `同伴 (${active.id})` : "玩家";
+    const remainingCompanions = state.squad.members.filter((member) => (member.type === "companion" || member.type === "npc") && member.inRoom).length;
     const remainingEnemies = state.squad.members.filter((member) => member.type === "enemy" && member.inRoom).length;
     ctx.fillText(`輪到：${activeLabel}｜同伴：${remainingCompanions}｜敵方：${remainingEnemies}`, 36, 218);
     if (state.squad.statusMessage) ctx.fillText(state.squad.statusMessage, 36, 240);
@@ -1900,6 +2027,7 @@ function canvasToWorld(state, clientX, clientY) {
 function handleCanvasClick(state, event) {
   const room = state.rooms[state.currentRoomId];
   if (!room.clickMove) return;
+  if (!isPlayerControlledTurn(state, room)) return;
   const point = canvasToWorld(state, event.clientX, event.clientY);
 
   if (room.movement === "network") {
@@ -1977,6 +2105,7 @@ function createDemoSystem() {
     createSquadRotationRoom(),
     createSquadRotationPassThroughRoom(),
     createSquadBattleRoom(),
+    createSquadBattleNpcAssistRoom(),
     createPreviewClickRoom(),
     createNetworkConstraintRoom(),
     createNetworkKeyboardRoom(),
@@ -2073,6 +2202,7 @@ function createDemoSystem() {
       }
       if (key === " ") {
         const room = state.rooms[state.currentRoomId];
+        if (!isPlayerControlledTurn(state, room)) return;
         if (room.previewMove) {
           commitPreviewPath(state);
           syncSquadAfterInput(state);
@@ -2085,6 +2215,7 @@ function createDemoSystem() {
         return;
       }
       const currentRoom = state.rooms[state.currentRoomId];
+      if (!isPlayerControlledTurn(state, currentRoom)) return;
       if (currentRoom.previewMove) {
         const directionMap = {
           ArrowUp: { x: 0, y: -1 },
@@ -2130,6 +2261,11 @@ function createDemoSystem() {
       if (!state) return;
       if (state.openingShowcase?.active) return;
       const room = state.rooms[state.currentRoomId];
+      if (!isPlayerControlledTurn(state, room)) {
+        clearPreviewPath(state);
+        syncSquadAfterInput(state);
+        return;
+      }
       if (room.previewMove !== "hover" || state.player.moveTo || state.player.pathQueue.length > 0) return;
       const point = canvasToWorld(state, event.clientX, event.clientY);
       const snapped = toGridPoint(room, point.x, point.y);
