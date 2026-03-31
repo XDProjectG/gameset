@@ -543,6 +543,7 @@ function createState(canvas, rooms) {
       velocityY: 0,
       sprintTier: 0,
       stamina: FREE_SPRINT_DEFAULTS.staminaMax,
+      facingAngle: -Math.PI / 2,
     },
     camera: { x: 0, y: 0 },
     keys: new Set(),
@@ -555,6 +556,36 @@ function createState(canvas, rooms) {
     canvas,
     openingShowcase: null,
   };
+}
+
+function updateFacingByDelta(player, dx, dy) {
+  if (Math.hypot(dx, dy) < 0.01) return;
+  player.facingAngle = Math.atan2(dy, dx);
+}
+
+function drawPlayerArrow(ctx, x, y, size, angle, fillColor) {
+  const points = [
+    { x: size, y: 0 },
+    { x: -size * 0.4, y: -size * 0.72 },
+    { x: -size * 0.95, y: 0 },
+    { x: -size * 0.4, y: size * 0.72 },
+  ];
+
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(angle);
+  ctx.beginPath();
+  points.forEach((point, index) => {
+    if (index === 0) ctx.moveTo(point.x, point.y);
+    else ctx.lineTo(point.x, point.y);
+  });
+  ctx.closePath();
+  ctx.fillStyle = fillColor;
+  ctx.fill();
+  ctx.strokeStyle = "#111";
+  ctx.lineWidth = 2;
+  ctx.stroke();
+  ctx.restore();
 }
 
 function clearAutoMove(state) {
@@ -1054,9 +1085,12 @@ function updateNetworkPlayer(state, room, dt) {
 
 function updatePlayer(state, dt) {
   const room = state.rooms[state.currentRoomId];
+  const prevX = state.player.x;
+  const prevY = state.player.y;
   if (room.movement === "grid") updateGridPlayer(state, room, dt);
   else if (room.movement === "network") updateNetworkPlayer(state, room, dt);
   else updateFreePlayer(state, room, dt);
+  updateFacingByDelta(state.player, state.player.x - prevX, state.player.y - prevY);
 }
 
 function updateCamera(state) {
@@ -1285,13 +1319,14 @@ function drawRoom(ctx, canvas, state) {
   drawEntrances(ctx, state, room);
   drawPreviewPath(ctx, room, state);
 
-  ctx.fillStyle = room.rangeLimited ? "#9cd0ff" : room.movement === "grid" ? "#8ff0c4" : "#f3d37c";
-  ctx.beginPath();
-  ctx.arc(state.player.x, state.player.y, PLAYER_RADIUS, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.strokeStyle = "#111";
-  ctx.lineWidth = 2;
-  ctx.stroke();
+  drawPlayerArrow(
+    ctx,
+    state.player.x,
+    state.player.y,
+    PLAYER_RADIUS,
+    state.player.facingAngle,
+    room.rangeLimited ? "#9cd0ff" : room.movement === "grid" ? "#8ff0c4" : "#f3d37c",
+  );
   ctx.restore();
 
   const deadZoneWidth = canvas.width * DEAD_ZONE.x;
