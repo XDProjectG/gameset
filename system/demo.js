@@ -1183,8 +1183,6 @@ function appendPreviewStep(state, room, dirX, dirY) {
   if (reachable && !reachable.has(`${nextGridX},${nextGridY}`)) return false;
   const nextWorld = gridToWorld(room, nextGridX, nextGridY);
   if (pointBlocked(room, nextWorld.x, nextWorld.y, state.player.radius)) return false;
-  const occupiedByOthers = room.squadRotation ? squadOccupiedCellSet(state, squadActiveMember(state)?.id ?? null) : null;
-  if (occupiedByOthers?.has(`${nextGridX},${nextGridY}`)) return false;
 
   const activeMember = room.squadRotation ? squadActiveMember(state) : null;
   const blockedSet = room.squadRotation ? squadOccupancyByType(state, activeMember?.id ?? null) : null;
