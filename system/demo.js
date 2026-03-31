@@ -1106,9 +1106,6 @@ function reachableCells(room, state) {
   const metrics = gridMetrics(room);
   const visited = new Map();
   const activeMember = room.squadRotation ? squadActiveMember(state) : null;
-  const occupiedByOthers = room.squadRotation
-    ? squadBlockedSetForMember(state, room, activeMember, null)
-    : null;
   const queue = [{ x: state.turn.originX, y: state.turn.originY, cost: 0 }];
   visited.set(`${state.turn.originX},${state.turn.originY}`, 0);
 
@@ -1126,10 +1123,13 @@ function reachableCells(room, state) {
       const nextCost = current.cost + movementCostForCell(room, next.x, next.y);
       const key = `${next.x},${next.y}`;
       const world = gridToWorld(room, next.x, next.y);
+      const occupant = room.squadRotation ? squadMemberAtCell(state, next.x, next.y, activeMember?.id ?? null) : null;
+      const isEnemyOccupant = Boolean(room.squadBattle && activeMember && occupant && occupant.team !== activeMember.team);
       if (nextCost > state.turn.budget || pointBlocked(room, world.x, world.y, state.player.radius)) return;
-      if (occupiedByOthers?.has(key)) return;
+      if (occupant && !room.squadPassThrough && !isEnemyOccupant) return;
       if (visited.has(key) && visited.get(key) <= nextCost) return;
       visited.set(key, nextCost);
+      if (isEnemyOccupant) return;
       queue.push({ x: next.x, y: next.y, cost: nextCost });
     });
   }
