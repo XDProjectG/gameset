@@ -57,8 +57,6 @@ function createRoom(id, name, world, options = {}) {
     terrainZones: options.terrainZones ?? [],
     terrainMovementCosts: options.terrainMovementCosts ?? null,
     squadRotation: options.squadRotation ?? false,
-    squadCompanionPassThrough: options.squadCompanionPassThrough ?? false,
-    squadPlayerExitIgnoresCompanions: options.squadPlayerExitIgnoresCompanions ?? false,
     rangeBudget: options.rangeBudget ?? DEFAULT_TURN_BUDGET,
     notes: options.notes ?? [],
     obstacles: options.obstacles ?? [],
@@ -353,32 +351,6 @@ function createSquadRotationRoom() {
     grid: { cellSize: GRID_CELL_SIZE },
     obstacles: createClickObstacles(),
     notes: ["1 位玩家 + 3 位同伴輪流移動；同伴使用藍色顯示。", "同伴走到返回點會先離場，玩家抵達返回點且同伴全離場後才會真正回到展示間。"],
-  });
-}
-
-function createSquadRotationFlexibleExitRoom() {
-  const terrainZones = [
-    { type: TERRAIN_TYPES.GARDEN, x: ROOM_MARGIN + GRID_CELL_SIZE * 2, y: ROOM_MARGIN + GRID_CELL_SIZE * 3, width: GRID_CELL_SIZE * 4, height: GRID_CELL_SIZE * 5 },
-    { type: TERRAIN_TYPES.SAND, x: ROOM_MARGIN + GRID_CELL_SIZE * 8, y: ROOM_MARGIN + GRID_CELL_SIZE * 3, width: GRID_CELL_SIZE * 4, height: GRID_CELL_SIZE * 5 },
-  ];
-  return createRoom("preview-squad-flex-exit-room", "輪替返回規則房", { width: 1728, height: 1224 }, {
-    movement: "grid",
-    clickMove: true,
-    rangeLimited: true,
-    previewMove: "hover",
-    squadRotation: true,
-    squadCompanionPassThrough: true,
-    squadPlayerExitIgnoresCompanions: true,
-    rangeBudget: 4,
-    terrainZones,
-    terrainMovementCosts: {
-      [TERRAIN_TYPES.GARDEN]: 2,
-      [TERRAIN_TYPES.SAND]: 3,
-    },
-    entrances: [{ x: 1224, y: 792, width: GRID_CELL_SIZE * 2, height: GRID_CELL_SIZE * 2, target: "hub", label: "返回展示間" }],
-    grid: { cellSize: GRID_CELL_SIZE },
-    obstacles: createClickObstacles(),
-    notes: ["沿用隊伍輪替移動房，玩家走到返回點可直接返回展示間。", "同伴彼此可穿越但不可同格；同伴抵達返回點仍只會自行離場。"],
   });
 }
 
@@ -706,19 +678,6 @@ function squadOccupiedCellSet(state, excludedMemberId = null) {
   return occupied;
 }
 
-function squadOccupancyByType(state, excludedMemberId = null) {
-  const occupied = {
-    player: new Set(),
-    companion: new Set(),
-  };
-  if (!state.squad) return occupied;
-  state.squad.members.forEach((member) => {
-    if (!member.inRoom || member.id === excludedMemberId) return;
-    occupied[member.type]?.add(`${member.gridX},${member.gridY}`);
-  });
-  return occupied;
-}
-
 function updateFacingByDelta(player, dx, dy) {
   if (Math.hypot(dx, dy) < 0.01) return;
   player.facingAngle = Math.atan2(dy, dx);
@@ -938,11 +897,6 @@ function resolveSquadTurn(state, room) {
     active.inRoom = false;
   }
   if (exitEntrance && active.type === "player") {
-    if (room.squadPlayerExitIgnoresCompanions) {
-      state.squad = null;
-      placePlayer(state, "hub", computeSpawn(state.rooms.hub));
-      return;
-    }
     const hasCompanionInRoom = state.squad.members.some((member) => member.type === "companion" && member.inRoom);
     if (!hasCompanionInRoom) {
       state.squad = null;
@@ -1015,10 +969,8 @@ function reachableCells(room, state) {
   if (!room.rangeLimited) return null;
   const metrics = gridMetrics(room);
   const visited = new Map();
-  const activeMember = room.squadRotation ? squadActiveMember(state) : null;
-  const activeMemberId = activeMember?.id ?? null;
-  const occupiedByType = room.squadRotation ? squadOccupancyByType(state, activeMemberId) : null;
-  const companionPassThrough = room.squadCompanionPassThrough && activeMember?.type === "companion";
+  const activeMemberId = room.squadRotation ? squadActiveMember(state)?.id ?? null : null;
+  const occupiedByOthers = room.squadRotation ? squadOccupiedCellSet(state, activeMemberId) : null;
   const queue = [{ x: state.turn.originX, y: state.turn.originY, cost: 0 }];
   visited.set(`${state.turn.originX},${state.turn.originY}`, 0);
 
@@ -1037,16 +989,11 @@ function reachableCells(room, state) {
       const key = `${next.x},${next.y}`;
       const world = gridToWorld(room, next.x, next.y);
       if (nextCost > state.turn.budget || pointBlocked(room, world.x, world.y, state.player.radius)) return;
-      if (occupiedByType?.player.has(key)) return;
-      if (!companionPassThrough && occupiedByType?.companion.has(key)) return;
+      if (occupiedByOthers?.has(key)) return;
       if (visited.has(key) && visited.get(key) <= nextCost) return;
       visited.set(key, nextCost);
       queue.push({ x: next.x, y: next.y, cost: nextCost });
     });
-  }
-
-  if (companionPassThrough) {
-    occupiedByType.companion.forEach((key) => visited.delete(key));
   }
 
   return visited;
@@ -1064,9 +1011,6 @@ function buildGridPath(room, fromX, fromY, toX, toY, allowedSet = null, blockedS
   const queue = [{ x: fromX, y: fromY, cost: 0 }];
   const cameFrom = new Map([[startKey, null]]);
   const bestCost = new Map([[startKey, 0]]);
-  const passThroughCompanions = blockedSet?.passThroughCompanions ?? false;
-  const companionBlockedSet = blockedSet?.companion ?? blockedSet;
-  const playerBlockedSet = blockedSet?.player ?? new Set();
 
   while (queue.length > 0) {
     queue.sort((a, b) => a.cost - b.cost);
@@ -1084,8 +1028,7 @@ function buildGridPath(room, fromX, fromY, toX, toY, allowedSet = null, blockedS
       const world = gridToWorld(room, next.x, next.y);
       if (pointBlocked(room, world.x, world.y, PLAYER_RADIUS)) return;
       if (allowedSet && !allowedSet.has(key)) return;
-      if (playerBlockedSet?.has(key)) return;
-      if (companionBlockedSet?.has(key) && (!passThroughCompanions || key === goalKey)) return;
+      if (blockedSet?.has(key)) return;
       const nextCost = current.cost + movementCostForCell(room, next.x, next.y);
       if (bestCost.has(key) && bestCost.get(key) <= nextCost) return;
       bestCost.set(key, nextCost);
@@ -1184,9 +1127,7 @@ function appendPreviewStep(state, room, dirX, dirY) {
   const nextWorld = gridToWorld(room, nextGridX, nextGridY);
   if (pointBlocked(room, nextWorld.x, nextWorld.y, state.player.radius)) return false;
 
-  const activeMember = room.squadRotation ? squadActiveMember(state) : null;
-  const blockedSet = room.squadRotation ? squadOccupancyByType(state, activeMember?.id ?? null) : null;
-  if (blockedSet) blockedSet.passThroughCompanions = room.squadCompanionPassThrough && activeMember?.type === "companion";
+  const blockedSet = room.squadRotation ? squadOccupiedCellSet(state, squadActiveMember(state)?.id ?? null) : null;
   const resolvedPath = buildGridPath(room, state.player.gridX, state.player.gridY, nextGridX, nextGridY, reachable, blockedSet);
   if (resolvedPath.length === 0 && (nextGridX !== state.player.gridX || nextGridY !== state.player.gridY)) return false;
   setPreviewPath(state, resolvedPath, { gridX: nextGridX, gridY: nextGridY });
@@ -1822,16 +1763,13 @@ function handleCanvasClick(state, event) {
 
   const snapped = toGridPoint(room, point.x, point.y);
   if (pointBlocked(room, snapped.x, snapped.y, state.player.radius)) return;
-  const activeMember = room.squadRotation ? squadActiveMember(state) : null;
-  const occupiedByOthers = room.squadRotation ? squadOccupiedCellSet(state, activeMember?.id ?? null) : null;
-  const pathBlockedSet = room.squadRotation ? squadOccupancyByType(state, activeMember?.id ?? null) : null;
-  if (pathBlockedSet) pathBlockedSet.passThroughCompanions = room.squadCompanionPassThrough && activeMember?.type === "companion";
+  const occupiedByOthers = room.squadRotation ? squadOccupiedCellSet(state, squadActiveMember(state)?.id ?? null) : null;
   if (occupiedByOthers?.has(`${snapped.gridX},${snapped.gridY}`)) return;
   const reachable = room.rangeLimited ? reachableCells(room, state) : null;
   if (room.rangeLimited && !reachable.has(`${snapped.gridX},${snapped.gridY}`)) return;
 
   if (room.previewMove === "hover") {
-    const path = buildGridPath(room, state.player.gridX, state.player.gridY, snapped.gridX, snapped.gridY, reachable, pathBlockedSet);
+    const path = buildGridPath(room, state.player.gridX, state.player.gridY, snapped.gridX, snapped.gridY, reachable, occupiedByOthers);
     if (path.length === 0 && (snapped.gridX !== state.player.gridX || snapped.gridY !== state.player.gridY)) return;
     setPreviewPath(state, path, { gridX: snapped.gridX, gridY: snapped.gridY });
     commitPreviewPath(state);
@@ -1845,14 +1783,14 @@ function handleCanvasClick(state, event) {
       syncSquadAfterInput(state);
       return;
     }
-    const path = buildGridPath(room, state.player.gridX, state.player.gridY, snapped.gridX, snapped.gridY, reachable, pathBlockedSet);
+    const path = buildGridPath(room, state.player.gridX, state.player.gridY, snapped.gridX, snapped.gridY, reachable, occupiedByOthers);
     if (path.length === 0 && (snapped.gridX !== state.player.gridX || snapped.gridY !== state.player.gridY)) return;
     setPreviewPath(state, path, { gridX: snapped.gridX, gridY: snapped.gridY });
     syncSquadAfterInput(state);
     return;
   }
 
-  const path = buildGridPath(room, state.player.gridX, state.player.gridY, snapped.gridX, snapped.gridY, reachable, pathBlockedSet);
+  const path = buildGridPath(room, state.player.gridX, state.player.gridY, snapped.gridX, snapped.gridY, reachable, occupiedByOthers);
   if (path.length === 0 && (snapped.gridX !== state.player.gridX || snapped.gridY !== state.player.gridY)) return;
   state.player.pathQueue = path;
   state.player.clickTarget = null;
@@ -1873,7 +1811,6 @@ function createDemoSystem() {
     createPreviewHoverRoom(),
     createPreviewTerrainCostRoom(),
     createSquadRotationRoom(),
-    createSquadRotationFlexibleExitRoom(),
     createPreviewClickRoom(),
     createNetworkConstraintRoom(),
     createNetworkKeyboardRoom(),
@@ -2031,16 +1968,13 @@ function createDemoSystem() {
       const point = canvasToWorld(state, event.clientX, event.clientY);
       const snapped = toGridPoint(room, point.x, point.y);
       const reachable = reachableCells(room, state);
-      const activeMember = room.squadRotation ? squadActiveMember(state) : null;
-      const occupiedByOthers = room.squadRotation ? squadOccupiedCellSet(state, activeMember?.id ?? null) : null;
-      const pathBlockedSet = room.squadRotation ? squadOccupancyByType(state, activeMember?.id ?? null) : null;
-      if (pathBlockedSet) pathBlockedSet.passThroughCompanions = room.squadCompanionPassThrough && activeMember?.type === "companion";
+      const occupiedByOthers = room.squadRotation ? squadOccupiedCellSet(state, squadActiveMember(state)?.id ?? null) : null;
       if (pointBlocked(room, snapped.x, snapped.y, state.player.radius) || occupiedByOthers?.has(`${snapped.gridX},${snapped.gridY}`) || (reachable && !reachable.has(`${snapped.gridX},${snapped.gridY}`))) {
         clearPreviewPath(state);
         syncSquadAfterInput(state);
         return;
       }
-      const path = buildGridPath(room, state.player.gridX, state.player.gridY, snapped.gridX, snapped.gridY, reachable, pathBlockedSet);
+      const path = buildGridPath(room, state.player.gridX, state.player.gridY, snapped.gridX, snapped.gridY, reachable, occupiedByOthers);
       if (path.length === 0 && (snapped.gridX !== state.player.gridX || snapped.gridY !== state.player.gridY)) {
         clearPreviewPath(state);
         syncSquadAfterInput(state);
