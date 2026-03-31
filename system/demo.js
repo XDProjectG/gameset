@@ -57,6 +57,7 @@ function createRoom(id, name, world, options = {}) {
     terrainZones: options.terrainZones ?? [],
     terrainMovementCosts: options.terrainMovementCosts ?? null,
     squadRotation: options.squadRotation ?? false,
+    squadBattle: options.squadBattle ?? false,
     squadPassThrough: options.squadPassThrough ?? false,
     squadPlayerExitRequiresClear: options.squadPlayerExitRequiresClear ?? true,
     rangeBudget: options.rangeBudget ?? DEFAULT_TURN_BUDGET,
