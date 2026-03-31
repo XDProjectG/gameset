@@ -668,6 +668,16 @@ function syncSquadAfterInput(state) {
   if (room?.squadRotation && state.squad) syncSquadFromPlayer(state);
 }
 
+function squadOccupiedCellSet(state, excludedMemberId = null) {
+  if (!state.squad) return null;
+  const occupied = new Set();
+  state.squad.members.forEach((member) => {
+    if (!member.inRoom || member.id === excludedMemberId) return;
+    occupied.add(`${member.gridX},${member.gridY}`);
+  });
+  return occupied;
+}
+
 function updateFacingByDelta(player, dx, dy) {
   if (Math.hypot(dx, dy) < 0.01) return;
   player.facingAngle = Math.atan2(dy, dx);
@@ -829,7 +839,16 @@ function initializeSquadState(state, room) {
     if (pointBlocked(room, world.x, world.y, state.player.radius)) return;
     cells.push({ gridX: gx, gridY: gy });
   });
-  while (cells.length < 4) cells.push({ gridX: baseX, gridY: baseY });
+  if (cells.length < 4) {
+    for (let y = 0; y < metrics.rows && cells.length < 4; y += 1) {
+      for (let x = 0; x < metrics.columns && cells.length < 4; x += 1) {
+        if (cells.some((cell) => cell.gridX === x && cell.gridY === y)) continue;
+        const world = gridToWorld(room, x, y);
+        if (pointBlocked(room, world.x, world.y, state.player.radius)) continue;
+        cells.push({ gridX: x, gridY: y });
+      }
+    }
+  }
 
   const orders = shuffle([1, 2, 3, 4]);
   const members = [
@@ -950,6 +969,8 @@ function reachableCells(room, state) {
   if (!room.rangeLimited) return null;
   const metrics = gridMetrics(room);
   const visited = new Map();
+  const activeMemberId = room.squadRotation ? squadActiveMember(state)?.id ?? null : null;
+  const occupiedByOthers = room.squadRotation ? squadOccupiedCellSet(state, activeMemberId) : null;
   const queue = [{ x: state.turn.originX, y: state.turn.originY, cost: 0 }];
   visited.set(`${state.turn.originX},${state.turn.originY}`, 0);
 
@@ -968,6 +989,7 @@ function reachableCells(room, state) {
       const key = `${next.x},${next.y}`;
       const world = gridToWorld(room, next.x, next.y);
       if (nextCost > state.turn.budget || pointBlocked(room, world.x, world.y, state.player.radius)) return;
+      if (occupiedByOthers?.has(key)) return;
       if (visited.has(key) && visited.get(key) <= nextCost) return;
       visited.set(key, nextCost);
       queue.push({ x: next.x, y: next.y, cost: nextCost });
@@ -982,7 +1004,7 @@ function canReachRangeCell(room, state, gridX, gridY) {
   return reachable?.has(`${gridX},${gridY}`) ?? false;
 }
 
-function buildGridPath(room, fromX, fromY, toX, toY, allowedSet = null) {
+function buildGridPath(room, fromX, fromY, toX, toY, allowedSet = null, blockedSet = null) {
   const metrics = gridMetrics(room);
   const startKey = `${fromX},${fromY}`;
   const goalKey = `${toX},${toY}`;
@@ -1006,6 +1028,7 @@ function buildGridPath(room, fromX, fromY, toX, toY, allowedSet = null) {
       const world = gridToWorld(room, next.x, next.y);
       if (pointBlocked(room, world.x, world.y, PLAYER_RADIUS)) return;
       if (allowedSet && !allowedSet.has(key)) return;
+      if (blockedSet?.has(key)) return;
       const nextCost = current.cost + movementCostForCell(room, next.x, next.y);
       if (bestCost.has(key) && bestCost.get(key) <= nextCost) return;
       bestCost.set(key, nextCost);
@@ -1104,15 +1127,20 @@ function appendPreviewStep(state, room, dirX, dirY) {
   const nextWorld = gridToWorld(room, nextGridX, nextGridY);
   if (pointBlocked(room, nextWorld.x, nextWorld.y, state.player.radius)) return false;
 
-  const path = buildGridPath(room, state.player.gridX, state.player.gridY, nextGridX, nextGridY, reachable);
-  if (path.length === 0 && (nextGridX !== state.player.gridX || nextGridY !== state.player.gridY)) return false;
-  setPreviewPath(state, path, { gridX: nextGridX, gridY: nextGridY });
+  const blockedSet = room.squadRotation ? squadOccupiedCellSet(state, squadActiveMember(state)?.id ?? null) : null;
+  const resolvedPath = buildGridPath(room, state.player.gridX, state.player.gridY, nextGridX, nextGridY, reachable, blockedSet);
+  if (resolvedPath.length === 0 && (nextGridX !== state.player.gridX || nextGridY !== state.player.gridY)) return false;
+  setPreviewPath(state, resolvedPath, { gridX: nextGridX, gridY: nextGridY });
   return true;
 }
 
 function startGridStep(state, room, nextGridX, nextGridY) {
   const target = gridToWorld(room, nextGridX, nextGridY);
   if (pointBlocked(room, target.x, target.y, state.player.radius)) return false;
+  if (room.squadRotation) {
+    const occupiedByOthers = squadOccupiedCellSet(state, squadActiveMember(state)?.id ?? null);
+    if (occupiedByOthers?.has(`${nextGridX},${nextGridY}`)) return false;
+  }
   if (room.rangeLimited && !canReachRangeCell(room, state, nextGridX, nextGridY)) return false;
   if (nextGridX === state.player.gridX && nextGridY === state.player.gridY) return false;
 
@@ -1735,11 +1763,13 @@ function handleCanvasClick(state, event) {
 
   const snapped = toGridPoint(room, point.x, point.y);
   if (pointBlocked(room, snapped.x, snapped.y, state.player.radius)) return;
+  const occupiedByOthers = room.squadRotation ? squadOccupiedCellSet(state, squadActiveMember(state)?.id ?? null) : null;
+  if (occupiedByOthers?.has(`${snapped.gridX},${snapped.gridY}`)) return;
   const reachable = room.rangeLimited ? reachableCells(room, state) : null;
   if (room.rangeLimited && !reachable.has(`${snapped.gridX},${snapped.gridY}`)) return;
 
   if (room.previewMove === "hover") {
-    const path = buildGridPath(room, state.player.gridX, state.player.gridY, snapped.gridX, snapped.gridY, reachable);
+    const path = buildGridPath(room, state.player.gridX, state.player.gridY, snapped.gridX, snapped.gridY, reachable, occupiedByOthers);
     if (path.length === 0 && (snapped.gridX !== state.player.gridX || snapped.gridY !== state.player.gridY)) return;
     setPreviewPath(state, path, { gridX: snapped.gridX, gridY: snapped.gridY });
     commitPreviewPath(state);
@@ -1753,14 +1783,14 @@ function handleCanvasClick(state, event) {
       syncSquadAfterInput(state);
       return;
     }
-    const path = buildGridPath(room, state.player.gridX, state.player.gridY, snapped.gridX, snapped.gridY, reachable);
+    const path = buildGridPath(room, state.player.gridX, state.player.gridY, snapped.gridX, snapped.gridY, reachable, occupiedByOthers);
     if (path.length === 0 && (snapped.gridX !== state.player.gridX || snapped.gridY !== state.player.gridY)) return;
     setPreviewPath(state, path, { gridX: snapped.gridX, gridY: snapped.gridY });
     syncSquadAfterInput(state);
     return;
   }
 
-  const path = buildGridPath(room, state.player.gridX, state.player.gridY, snapped.gridX, snapped.gridY, reachable);
+  const path = buildGridPath(room, state.player.gridX, state.player.gridY, snapped.gridX, snapped.gridY, reachable, occupiedByOthers);
   if (path.length === 0 && (snapped.gridX !== state.player.gridX || snapped.gridY !== state.player.gridY)) return;
   state.player.pathQueue = path;
   state.player.clickTarget = null;
@@ -1938,12 +1968,13 @@ function createDemoSystem() {
       const point = canvasToWorld(state, event.clientX, event.clientY);
       const snapped = toGridPoint(room, point.x, point.y);
       const reachable = reachableCells(room, state);
-      if (pointBlocked(room, snapped.x, snapped.y, state.player.radius) || (reachable && !reachable.has(`${snapped.gridX},${snapped.gridY}`))) {
+      const occupiedByOthers = room.squadRotation ? squadOccupiedCellSet(state, squadActiveMember(state)?.id ?? null) : null;
+      if (pointBlocked(room, snapped.x, snapped.y, state.player.radius) || occupiedByOthers?.has(`${snapped.gridX},${snapped.gridY}`) || (reachable && !reachable.has(`${snapped.gridX},${snapped.gridY}`))) {
         clearPreviewPath(state);
         syncSquadAfterInput(state);
         return;
       }
-      const path = buildGridPath(room, state.player.gridX, state.player.gridY, snapped.gridX, snapped.gridY, reachable);
+      const path = buildGridPath(room, state.player.gridX, state.player.gridY, snapped.gridX, snapped.gridY, reachable, occupiedByOthers);
       if (path.length === 0 && (snapped.gridX !== state.player.gridX || snapped.gridY !== state.player.gridY)) {
         clearPreviewPath(state);
         syncSquadAfterInput(state);
