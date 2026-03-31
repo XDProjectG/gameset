@@ -222,8 +222,8 @@ function createSprintTerrainRoom() {
     sprint: {
       ...FREE_SPRINT_DEFAULTS,
       terrainResistance: {
-        [TERRAIN_TYPES.GARDEN]: { mode: "constant", drag: 235 },
-        [TERRAIN_TYPES.SAND]: { mode: "speedScaled", linear: 0.35, quadratic: 0.0025, base: 26 },
+        [TERRAIN_TYPES.GARDEN]: { mode: "constant", drag: 320, accelerationScale: 0.82, runningSpeedScale: 0.78, walkingSpeedScale: 0.92 },
+        [TERRAIN_TYPES.SAND]: { mode: "speedScaled", linear: 0.85, quadratic: 0.0045, base: 40, accelerationScale: 0.62, runningSpeedScale: 0.58, walkingSpeedScale: 0.9 },
       },
     },
     terrainZones,
@@ -307,7 +307,7 @@ function createPreviewTerrainCostRoom() {
     clickMove: true,
     rangeLimited: true,
     previewMove: "hover",
-    rangeBudget: 12,
+    rangeBudget: 4,
     terrainZones,
     terrainMovementCosts: {
       [TERRAIN_TYPES.GARDEN]: 2,
@@ -926,7 +926,8 @@ function updateFreePlayer(state, room, dt) {
     return;
   }
 
-  if (state.player.sprintTier > 0) {
+  const movingByInput = Boolean(direction);
+  if (state.player.sprintTier > 0 && movingByInput) {
     const drain = sprint.staminaDrainPerSecond[state.player.sprintTier] ?? 0;
     state.player.stamina = Math.max(0, state.player.stamina - drain * dt);
     if (state.player.stamina <= 0) state.player.sprintTier = 0;
@@ -934,22 +935,27 @@ function updateFreePlayer(state, room, dt) {
     state.player.stamina = Math.min(sprint.staminaMax, state.player.stamina + sprint.staminaRegenPerSecond * dt);
   }
 
+  const terrain = terrainAtPoint(room, state.player.x, state.player.y);
+  const terrainResistance = terrain ? sprint.terrainResistance?.[terrain.type] : null;
+  const terrainSpeedScale = terrainResistance
+    ? (state.player.sprintTier > 0 ? terrainResistance.runningSpeedScale : terrainResistance.walkingSpeedScale) ?? 1
+    : 1;
   const length = direction ? Math.hypot(direction.x, direction.y) || 1 : 0;
-  const desiredSpeed = direction ? sprint.baseSpeed * (sprint.speedTiers[state.player.sprintTier] ?? 1) : 0;
+  const desiredSpeed = direction ? sprint.baseSpeed * (sprint.speedTiers[state.player.sprintTier] ?? 1) * terrainSpeedScale : 0;
   const desiredVx = direction ? (direction.x / length) * desiredSpeed : 0;
   const desiredVy = direction ? (direction.y / length) * desiredSpeed : 0;
   const dvx = desiredVx - state.player.velocityX;
   const dvy = desiredVy - state.player.velocityY;
-  const accel = desiredSpeed > 0 ? sprint.acceleration : sprint.deceleration;
+  const accelScale = terrainResistance?.accelerationScale ?? 1;
+  const accel = (desiredSpeed > 0 ? sprint.acceleration : sprint.deceleration) * accelScale;
   const maxDeltaV = (accel / Math.max(0.01, sprint.mass)) * dt;
   const deltaMag = Math.hypot(dvx, dvy);
   const ratio = deltaMag > maxDeltaV ? maxDeltaV / deltaMag : 1;
   state.player.velocityX += dvx * ratio;
   state.player.velocityY += dvy * ratio;
 
-  const terrain = terrainAtPoint(room, state.player.x, state.player.y);
-  if (terrain && sprint.terrainResistance?.[terrain.type]) {
-    const resistance = sprint.terrainResistance[terrain.type];
+  if (terrainResistance) {
+    const resistance = terrainResistance;
     const speed = Math.hypot(state.player.velocityX, state.player.velocityY);
     if (speed > 0.001) {
       const drag = resistance.mode === "speedScaled"
@@ -1341,19 +1347,31 @@ function drawRoom(ctx, canvas, state) {
     ctx.font = "13px 'Noto Sans TC', sans-serif";
     ctx.fillText("耐力", barX - 2, gaugeY + gaugeH - 4);
 
-    const lamps = ["慢", "中", "快"];
-    lamps.forEach((label, index) => {
-      const active = state.player.sprintTier >= index + 1;
-      const y = gaugeY + gaugeH - 28 - index * 30;
-      const cx = gaugeX + 62;
-      ctx.fillStyle = active ? "#ffe98a" : "rgba(130,145,170,0.35)";
+    const speedBarX = gaugeX + 62;
+    const speedBarY = gaugeY + 24;
+    const segmentH = 24;
+    const baseW = 46;
+    const topGrow = 12;
+    ["快", "中", "慢"].forEach((label, order) => {
+      const tier = 3 - order;
+      const active = state.player.sprintTier >= tier;
+      const y = speedBarY + order * (segmentH + 6);
+      const topW = baseW + topGrow * tier;
+      const bottomW = baseW + topGrow * Math.max(0, tier - 1);
+      const leftTop = speedBarX - topW / 2;
+      const leftBottom = speedBarX - bottomW / 2;
       ctx.beginPath();
-      ctx.arc(cx, y, 9, 0, Math.PI * 2);
+      ctx.moveTo(leftTop, y);
+      ctx.lineTo(leftTop + topW, y);
+      ctx.lineTo(leftBottom + bottomW, y + segmentH);
+      ctx.lineTo(leftBottom, y + segmentH);
+      ctx.closePath();
+      ctx.fillStyle = active ? "#ffe98a" : "rgba(130,145,170,0.35)";
       ctx.fill();
-      ctx.strokeStyle = "rgba(240,247,255,0.65)";
+      ctx.strokeStyle = "rgba(240,247,255,0.6)";
       ctx.stroke();
       ctx.fillStyle = "#dce9ff";
-      ctx.fillText(label, cx + 20, y + 4);
+      ctx.fillText(label, speedBarX + 42, y + 16);
     });
     ctx.fillStyle = "#bfd6f7";
     ctx.fillText("Shift 切換檔位", gaugeX + 56, gaugeY + 18);
