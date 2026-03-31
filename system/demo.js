@@ -710,11 +710,14 @@ function squadOccupancyByType(state, excludedMemberId = null) {
   const occupied = {
     player: new Set(),
     companion: new Set(),
+    all: new Set(),
   };
   if (!state.squad) return occupied;
   state.squad.members.forEach((member) => {
     if (!member.inRoom || member.id === excludedMemberId) return;
-    occupied[member.type]?.add(`${member.gridX},${member.gridY}`);
+    const key = `${member.gridX},${member.gridY}`;
+    occupied[member.type]?.add(key);
+    occupied.all.add(key);
   });
   return occupied;
 }
@@ -1018,7 +1021,7 @@ function reachableCells(room, state) {
   const activeMember = room.squadRotation ? squadActiveMember(state) : null;
   const activeMemberId = activeMember?.id ?? null;
   const occupiedByType = room.squadRotation ? squadOccupancyByType(state, activeMemberId) : null;
-  const companionPassThrough = room.squadCompanionPassThrough && activeMember?.type === "companion";
+  const squadPassThrough = room.squadCompanionPassThrough && !!activeMember;
   const queue = [{ x: state.turn.originX, y: state.turn.originY, cost: 0 }];
   visited.set(`${state.turn.originX},${state.turn.originY}`, 0);
 
@@ -1037,16 +1040,15 @@ function reachableCells(room, state) {
       const key = `${next.x},${next.y}`;
       const world = gridToWorld(room, next.x, next.y);
       if (nextCost > state.turn.budget || pointBlocked(room, world.x, world.y, state.player.radius)) return;
-      if (occupiedByType?.player.has(key)) return;
-      if (!companionPassThrough && occupiedByType?.companion.has(key)) return;
+      if (!squadPassThrough && occupiedByType?.all.has(key)) return;
       if (visited.has(key) && visited.get(key) <= nextCost) return;
       visited.set(key, nextCost);
       queue.push({ x: next.x, y: next.y, cost: nextCost });
     });
   }
 
-  if (companionPassThrough) {
-    occupiedByType.companion.forEach((key) => visited.delete(key));
+  if (squadPassThrough) {
+    occupiedByType.all.forEach((key) => visited.delete(key));
   }
 
   return visited;
@@ -1064,9 +1066,8 @@ function buildGridPath(room, fromX, fromY, toX, toY, allowedSet = null, blockedS
   const queue = [{ x: fromX, y: fromY, cost: 0 }];
   const cameFrom = new Map([[startKey, null]]);
   const bestCost = new Map([[startKey, 0]]);
-  const passThroughCompanions = blockedSet?.passThroughCompanions ?? false;
-  const companionBlockedSet = blockedSet?.companion ?? blockedSet;
-  const playerBlockedSet = blockedSet?.player ?? new Set();
+  const passThroughOccupiedMembers = blockedSet?.passThroughOccupiedMembers ?? blockedSet?.passThroughCompanions ?? false;
+  const blockedMembersSet = blockedSet?.all ?? blockedSet?.companion ?? blockedSet;
 
   while (queue.length > 0) {
     queue.sort((a, b) => a.cost - b.cost);
@@ -1084,8 +1085,7 @@ function buildGridPath(room, fromX, fromY, toX, toY, allowedSet = null, blockedS
       const world = gridToWorld(room, next.x, next.y);
       if (pointBlocked(room, world.x, world.y, PLAYER_RADIUS)) return;
       if (allowedSet && !allowedSet.has(key)) return;
-      if (playerBlockedSet?.has(key)) return;
-      if (companionBlockedSet?.has(key) && (!passThroughCompanions || key === goalKey)) return;
+      if (blockedMembersSet?.has(key) && (!passThroughOccupiedMembers || key === goalKey)) return;
       const nextCost = current.cost + movementCostForCell(room, next.x, next.y);
       if (bestCost.has(key) && bestCost.get(key) <= nextCost) return;
       bestCost.set(key, nextCost);
@@ -1186,7 +1186,7 @@ function appendPreviewStep(state, room, dirX, dirY) {
 
   const activeMember = room.squadRotation ? squadActiveMember(state) : null;
   const blockedSet = room.squadRotation ? squadOccupancyByType(state, activeMember?.id ?? null) : null;
-  if (blockedSet) blockedSet.passThroughCompanions = room.squadCompanionPassThrough && activeMember?.type === "companion";
+  if (blockedSet) blockedSet.passThroughOccupiedMembers = room.squadCompanionPassThrough && !!activeMember;
   const resolvedPath = buildGridPath(room, state.player.gridX, state.player.gridY, nextGridX, nextGridY, reachable, blockedSet);
   if (resolvedPath.length === 0 && (nextGridX !== state.player.gridX || nextGridY !== state.player.gridY)) return false;
   setPreviewPath(state, resolvedPath, { gridX: nextGridX, gridY: nextGridY });
@@ -1825,7 +1825,7 @@ function handleCanvasClick(state, event) {
   const activeMember = room.squadRotation ? squadActiveMember(state) : null;
   const occupiedByOthers = room.squadRotation ? squadOccupiedCellSet(state, activeMember?.id ?? null) : null;
   const pathBlockedSet = room.squadRotation ? squadOccupancyByType(state, activeMember?.id ?? null) : null;
-  if (pathBlockedSet) pathBlockedSet.passThroughCompanions = room.squadCompanionPassThrough && activeMember?.type === "companion";
+  if (pathBlockedSet) pathBlockedSet.passThroughOccupiedMembers = room.squadCompanionPassThrough && !!activeMember;
   if (occupiedByOthers?.has(`${snapped.gridX},${snapped.gridY}`)) return;
   const reachable = room.rangeLimited ? reachableCells(room, state) : null;
   if (room.rangeLimited && !reachable.has(`${snapped.gridX},${snapped.gridY}`)) return;
@@ -2034,7 +2034,7 @@ function createDemoSystem() {
       const activeMember = room.squadRotation ? squadActiveMember(state) : null;
       const occupiedByOthers = room.squadRotation ? squadOccupiedCellSet(state, activeMember?.id ?? null) : null;
       const pathBlockedSet = room.squadRotation ? squadOccupancyByType(state, activeMember?.id ?? null) : null;
-      if (pathBlockedSet) pathBlockedSet.passThroughCompanions = room.squadCompanionPassThrough && activeMember?.type === "companion";
+      if (pathBlockedSet) pathBlockedSet.passThroughOccupiedMembers = room.squadCompanionPassThrough && !!activeMember;
       if (pointBlocked(room, snapped.x, snapped.y, state.player.radius) || occupiedByOthers?.has(`${snapped.gridX},${snapped.gridY}`) || (reachable && !reachable.has(`${snapped.gridX},${snapped.gridY}`))) {
         clearPreviewPath(state);
         syncSquadAfterInput(state);
