@@ -428,8 +428,11 @@ function createSquadBattleNpcAssistRoom() {
     squadCompanionCount: 2,
     squadNpcAllyCount: 3,
     squadEnemyCount: 6,
+<<<<<<< codex/add-room-with-ai-controlled-npcs_2026-03-31_11-42-02
+=======
     showRangeOverlay: false,
     showPreviewPath: false,
+>>>>>>> main
     rangeBudget: 4,
     terrainZones,
     terrainMovementCosts: {
@@ -1077,6 +1080,21 @@ function isPlayerControlledTurn(state, room) {
   return active?.control !== "ai";
 }
 
+<<<<<<< codex/add-room-with-ai-controlled-npcs_2026-03-31_11-42-02
+function shouldShowRangeOverlay(state, room) {
+  if (!room.rangeLimited || room.showRangeOverlay === false) return false;
+  if (room.squadRotation && !isPlayerControlledTurn(state, room)) return false;
+  return true;
+}
+
+function shouldShowPreviewPath(state, room) {
+  if (!room.previewMove || room.showPreviewPath === false) return false;
+  if (room.squadRotation && !isPlayerControlledTurn(state, room)) return false;
+  return true;
+}
+
+=======
+>>>>>>> main
 function assignAiPath(state, room, active) {
   const opponents = state.squad.members.filter((member) => member.inRoom && member.team !== active.team);
   if (opponents.length === 0) return false;
@@ -1648,7 +1666,11 @@ function drawObstacles(ctx, room) {
 function drawGridOverlay(ctx, room, state) {
   if (room.movement !== "grid") return;
   const metrics = gridMetrics(room);
+<<<<<<< codex/add-room-with-ai-controlled-npcs_2026-03-31_11-42-02
+  const reachable = shouldShowRangeOverlay(state, room) ? reachableCells(room, state) : null;
+=======
   const reachable = room.rangeLimited && room.showRangeOverlay ? reachableCells(room, state) : null;
+>>>>>>> main
 
   if (reachable) {
     const pulse = 0.28 + (Math.sin(state.pulseTime * 3) + 1) * 0.18;
@@ -1697,7 +1719,11 @@ function drawEntrances(ctx, state, room) {
 }
 
 function drawPreviewPath(ctx, room, state) {
+<<<<<<< codex/add-room-with-ai-controlled-npcs_2026-03-31_11-42-02
+  if (!shouldShowPreviewPath(state, room) || !state.player.previewTarget) return;
+=======
   if (!room.previewMove || room.showPreviewPath === false || !state.player.previewTarget) return;
+>>>>>>> main
   if (state.player.previewPath.length === 0) {
     if (state.player.previewTarget.gridX !== state.player.gridX || state.player.previewTarget.gridY !== state.player.gridY) return;
     ctx.strokeStyle = "rgba(123, 207, 255, 0.95)";
@@ -1905,8 +1931,13 @@ function drawRoom(ctx, canvas, state) {
   ctx.fillText(controlLine, 36, 82);
   room.notes.forEach((line, index) => ctx.fillText(line, 36, 108 + index * 22));
   if (room.movement === "grid") ctx.fillText(`目前格位：(${state.player.gridX}, ${state.player.gridY})`, 36, room.rangeLimited ? 152 : 130);
+<<<<<<< codex/add-room-with-ai-controlled-npcs_2026-03-31_11-42-02
+  if (shouldShowRangeOverlay(state, room)) ctx.fillText(`本次移動起點：(${state.turn.originX}, ${state.turn.originY})｜移動力上限 ${state.turn.budget}`, 36, 174);
+  if (shouldShowPreviewPath(state, room)) ctx.fillText(`預覽步數：${state.player.previewPath.length}｜按 Space 依路徑移動`, 36, 196);
+=======
   if (room.rangeLimited && room.showRangeOverlay) ctx.fillText(`本次移動起點：(${state.turn.originX}, ${state.turn.originY})｜移動力上限 ${state.turn.budget}`, 36, 174);
   if (room.previewMove && room.showPreviewPath !== false) ctx.fillText(`預覽步數：${state.player.previewPath.length}｜按 Space 依路徑移動`, 36, 196);
+>>>>>>> main
   if (room.squadRotation && state.squad) {
     const active = squadActiveMember(state);
     const activeLabel = active?.type === "enemy" ? `敵方 (${active.id})` : active?.type === "npc" ? `友方NPC (${active.id})` : active?.type === "companion" ? `同伴 (${active.id})` : "玩家";
