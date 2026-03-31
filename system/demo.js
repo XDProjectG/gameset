@@ -57,6 +57,8 @@ function createRoom(id, name, world, options = {}) {
     terrainZones: options.terrainZones ?? [],
     terrainMovementCosts: options.terrainMovementCosts ?? null,
     squadRotation: options.squadRotation ?? false,
+    squadPassThrough: options.squadPassThrough ?? false,
+    squadPlayerExitRequiresClear: options.squadPlayerExitRequiresClear ?? true,
     rangeBudget: options.rangeBudget ?? DEFAULT_TURN_BUDGET,
     notes: options.notes ?? [],
     obstacles: options.obstacles ?? [],
@@ -351,6 +353,32 @@ function createSquadRotationRoom() {
     grid: { cellSize: GRID_CELL_SIZE },
     obstacles: createClickObstacles(),
     notes: ["1 位玩家 + 3 位同伴輪流移動；同伴使用藍色顯示。", "同伴走到返回點會先離場，玩家抵達返回點且同伴全離場後才會真正回到展示間。"],
+  });
+}
+
+function createSquadRotationPassThroughRoom() {
+  const terrainZones = [
+    { type: TERRAIN_TYPES.GARDEN, x: ROOM_MARGIN + GRID_CELL_SIZE * 2, y: ROOM_MARGIN + GRID_CELL_SIZE * 3, width: GRID_CELL_SIZE * 4, height: GRID_CELL_SIZE * 5 },
+    { type: TERRAIN_TYPES.SAND, x: ROOM_MARGIN + GRID_CELL_SIZE * 8, y: ROOM_MARGIN + GRID_CELL_SIZE * 3, width: GRID_CELL_SIZE * 4, height: GRID_CELL_SIZE * 5 },
+  ];
+  return createRoom("preview-squad-pass-through-room", "隊伍輪替穿越房", { width: 1728, height: 1224 }, {
+    movement: "grid",
+    clickMove: true,
+    rangeLimited: true,
+    previewMove: "hover",
+    squadRotation: true,
+    squadPassThrough: true,
+    squadPlayerExitRequiresClear: false,
+    rangeBudget: 4,
+    terrainZones,
+    terrainMovementCosts: {
+      [TERRAIN_TYPES.GARDEN]: 2,
+      [TERRAIN_TYPES.SAND]: 3,
+    },
+    entrances: [{ x: 1224, y: 792, width: GRID_CELL_SIZE * 2, height: GRID_CELL_SIZE * 2, target: "hub", label: "返回展示間" }],
+    grid: { cellSize: GRID_CELL_SIZE },
+    obstacles: createClickObstacles(),
+    notes: ["玩家踩到返回點時可直接回展示間；同伴踩到返回點仍會離場。", "同伴彼此可穿越但不能停在同一格：格子預覽維持可通行，僅在確認終點時檢查佔位。"],
   });
 }
 
@@ -898,7 +926,7 @@ function resolveSquadTurn(state, room) {
   }
   if (exitEntrance && active.type === "player") {
     const hasCompanionInRoom = state.squad.members.some((member) => member.type === "companion" && member.inRoom);
-    if (!hasCompanionInRoom) {
+    if (!room.squadPlayerExitRequiresClear || !hasCompanionInRoom) {
       state.squad = null;
       placePlayer(state, "hub", computeSpawn(state.rooms.hub));
       return;
@@ -970,7 +998,7 @@ function reachableCells(room, state) {
   const metrics = gridMetrics(room);
   const visited = new Map();
   const activeMemberId = room.squadRotation ? squadActiveMember(state)?.id ?? null : null;
-  const occupiedByOthers = room.squadRotation ? squadOccupiedCellSet(state, activeMemberId) : null;
+  const occupiedByOthers = room.squadRotation && !room.squadPassThrough ? squadOccupiedCellSet(state, activeMemberId) : null;
   const queue = [{ x: state.turn.originX, y: state.turn.originY, cost: 0 }];
   visited.set(`${state.turn.originX},${state.turn.originY}`, 0);
 
@@ -1090,6 +1118,10 @@ function buildFreePath(room, fromX, fromY, toX, toY) {
 function commitPreviewPath(state) {
   const room = state.rooms[state.currentRoomId];
   if (state.player.moveTo || state.player.clickTarget || !state.player.previewTarget) return false;
+  if (room.squadRotation) {
+    const occupiedByOthers = squadOccupiedCellSet(state, squadActiveMember(state)?.id ?? null);
+    if (occupiedByOthers?.has(`${state.player.previewTarget.gridX},${state.player.previewTarget.gridY}`)) return false;
+  }
   if (state.player.previewPath.length === 0) {
     if (state.player.previewTarget.gridX !== state.player.gridX || state.player.previewTarget.gridY !== state.player.gridY) return false;
     clearPreviewPath(state);
@@ -1127,7 +1159,7 @@ function appendPreviewStep(state, room, dirX, dirY) {
   const nextWorld = gridToWorld(room, nextGridX, nextGridY);
   if (pointBlocked(room, nextWorld.x, nextWorld.y, state.player.radius)) return false;
 
-  const blockedSet = room.squadRotation ? squadOccupiedCellSet(state, squadActiveMember(state)?.id ?? null) : null;
+  const blockedSet = room.squadRotation && !room.squadPassThrough ? squadOccupiedCellSet(state, squadActiveMember(state)?.id ?? null) : null;
   const resolvedPath = buildGridPath(room, state.player.gridX, state.player.gridY, nextGridX, nextGridY, reachable, blockedSet);
   if (resolvedPath.length === 0 && (nextGridX !== state.player.gridX || nextGridY !== state.player.gridY)) return false;
   setPreviewPath(state, resolvedPath, { gridX: nextGridX, gridY: nextGridY });
@@ -1137,7 +1169,7 @@ function appendPreviewStep(state, room, dirX, dirY) {
 function startGridStep(state, room, nextGridX, nextGridY) {
   const target = gridToWorld(room, nextGridX, nextGridY);
   if (pointBlocked(room, target.x, target.y, state.player.radius)) return false;
-  if (room.squadRotation) {
+  if (room.squadRotation && !room.squadPassThrough) {
     const occupiedByOthers = squadOccupiedCellSet(state, squadActiveMember(state)?.id ?? null);
     if (occupiedByOthers?.has(`${nextGridX},${nextGridY}`)) return false;
   }
@@ -1769,7 +1801,8 @@ function handleCanvasClick(state, event) {
   if (room.rangeLimited && !reachable.has(`${snapped.gridX},${snapped.gridY}`)) return;
 
   if (room.previewMove === "hover") {
-    const path = buildGridPath(room, state.player.gridX, state.player.gridY, snapped.gridX, snapped.gridY, reachable, occupiedByOthers);
+    const blockedSet = room.squadPassThrough ? null : occupiedByOthers;
+    const path = buildGridPath(room, state.player.gridX, state.player.gridY, snapped.gridX, snapped.gridY, reachable, blockedSet);
     if (path.length === 0 && (snapped.gridX !== state.player.gridX || snapped.gridY !== state.player.gridY)) return;
     setPreviewPath(state, path, { gridX: snapped.gridX, gridY: snapped.gridY });
     commitPreviewPath(state);
@@ -1783,14 +1816,16 @@ function handleCanvasClick(state, event) {
       syncSquadAfterInput(state);
       return;
     }
-    const path = buildGridPath(room, state.player.gridX, state.player.gridY, snapped.gridX, snapped.gridY, reachable, occupiedByOthers);
+    const blockedSet = room.squadPassThrough ? null : occupiedByOthers;
+    const path = buildGridPath(room, state.player.gridX, state.player.gridY, snapped.gridX, snapped.gridY, reachable, blockedSet);
     if (path.length === 0 && (snapped.gridX !== state.player.gridX || snapped.gridY !== state.player.gridY)) return;
     setPreviewPath(state, path, { gridX: snapped.gridX, gridY: snapped.gridY });
     syncSquadAfterInput(state);
     return;
   }
 
-  const path = buildGridPath(room, state.player.gridX, state.player.gridY, snapped.gridX, snapped.gridY, reachable, occupiedByOthers);
+  const blockedSet = room.squadPassThrough ? null : occupiedByOthers;
+  const path = buildGridPath(room, state.player.gridX, state.player.gridY, snapped.gridX, snapped.gridY, reachable, blockedSet);
   if (path.length === 0 && (snapped.gridX !== state.player.gridX || snapped.gridY !== state.player.gridY)) return;
   state.player.pathQueue = path;
   state.player.clickTarget = null;
@@ -1811,6 +1846,7 @@ function createDemoSystem() {
     createPreviewHoverRoom(),
     createPreviewTerrainCostRoom(),
     createSquadRotationRoom(),
+    createSquadRotationPassThroughRoom(),
     createPreviewClickRoom(),
     createNetworkConstraintRoom(),
     createNetworkKeyboardRoom(),
@@ -1974,7 +2010,8 @@ function createDemoSystem() {
         syncSquadAfterInput(state);
         return;
       }
-      const path = buildGridPath(room, state.player.gridX, state.player.gridY, snapped.gridX, snapped.gridY, reachable, occupiedByOthers);
+      const blockedSet = room.squadPassThrough ? null : occupiedByOthers;
+      const path = buildGridPath(room, state.player.gridX, state.player.gridY, snapped.gridX, snapped.gridY, reachable, blockedSet);
       if (path.length === 0 && (snapped.gridX !== state.player.gridX || snapped.gridY !== state.player.gridY)) {
         clearPreviewPath(state);
         syncSquadAfterInput(state);
