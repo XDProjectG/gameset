@@ -65,6 +65,9 @@ function createRoom(id, name, world, options = {}) {
     squadEnemyCount: options.squadEnemyCount ?? (options.squadBattle ? 4 : 0),
     showRangeOverlay: options.showRangeOverlay ?? true,
     showPreviewPath: options.showPreviewPath ?? true,
+    randomizeRangeBudgetOnEnter: options.randomizeRangeBudgetOnEnter ?? false,
+    rangeBudgetMin: options.rangeBudgetMin ?? 3,
+    rangeBudgetMax: options.rangeBudgetMax ?? 6,
     rangeBudget: options.rangeBudget ?? DEFAULT_TURN_BUDGET,
     notes: options.notes ?? [],
     obstacles: options.obstacles ?? [],
@@ -428,6 +431,9 @@ function createSquadBattleNpcAssistRoom() {
     squadCompanionCount: 2,
     squadNpcAllyCount: 3,
     squadEnemyCount: 6,
+    randomizeRangeBudgetOnEnter: true,
+    rangeBudgetMin: 3,
+    rangeBudgetMax: 6,
     rangeBudget: 4,
     terrainZones,
     terrainMovementCosts: {
@@ -569,6 +575,12 @@ function createHubRoom(rooms) {
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
+}
+
+function randomInt(min, max) {
+  const lower = Math.min(min, max);
+  const upper = Math.max(min, max);
+  return lower + Math.floor(Math.random() * (upper - lower + 1));
 }
 
 function rectContains(rect, x, y) {
@@ -1092,39 +1104,58 @@ function assignAiPath(state, room, active) {
   if (opponents.length === 0) return false;
   const reachable = room.rangeLimited ? reachableCells(room, state) : null;
   const blockedSet = squadBlockedSetForMember(state, room, active, null);
+  const plannedRoutes = opponents
+    .map((opponent) => {
+      const goalKey = `${opponent.gridX},${opponent.gridY}`;
+      const dynamicBlocked = blockedSet ? new Set(blockedSet) : null;
+      dynamicBlocked?.delete(goalKey);
+      const pathToTarget = buildGridPath(room, active.gridX, active.gridY, opponent.gridX, opponent.gridY, null, dynamicBlocked);
+      return { opponent, pathToTarget };
+    })
+    .filter(({ pathToTarget, opponent }) => pathToTarget.length > 0 || (opponent.gridX === active.gridX && opponent.gridY === active.gridY))
+    .sort((a, b) => a.pathToTarget.length - b.pathToTarget.length);
+
   let bestPath = null;
-  let bestDistance = Infinity;
-
-  opponents.forEach((opponent) => {
-    const goalKey = `${opponent.gridX},${opponent.gridY}`;
-    const dynamicBlocked = blockedSet ? new Set(blockedSet) : null;
-    dynamicBlocked?.delete(goalKey);
-    const path = buildGridPath(room, active.gridX, active.gridY, opponent.gridX, opponent.gridY, reachable, dynamicBlocked);
-    if (path.length === 0 && (active.gridX !== opponent.gridX || active.gridY !== opponent.gridY)) return;
-    if (!bestPath || path.length < bestPath.length) {
-      bestPath = path;
-      bestDistance = 0;
-    }
-  });
-
-  if (!bestPath) {
-    if (!reachable) return false;
-    reachable.forEach((_, key) => {
-      const [gx, gy] = key.split(",").map(Number);
-      const isOrigin = gx === active.gridX && gy === active.gridY;
-      if (isOrigin) return;
-      if (blockedSet?.has(key)) return;
-      const path = buildGridPath(room, active.gridX, active.gridY, gx, gy, reachable, blockedSet);
-      if (path.length === 0) return;
-      const minDistance = opponents.reduce((best, opponent) => Math.min(best, Math.abs(opponent.gridX - gx) + Math.abs(opponent.gridY - gy)), Infinity);
-      if (minDistance < bestDistance || (minDistance === bestDistance && (!bestPath || path.length < bestPath.length))) {
-        bestDistance = minDistance;
-        bestPath = path;
+  if (plannedRoutes.length > 0) {
+    const { opponent, pathToTarget } = plannedRoutes[0];
+    if (!reachable) {
+      bestPath = pathToTarget;
+    } else {
+      const furthestReachableStep = pathToTarget.reduce((best, step) => (reachable.has(`${step.gridX},${step.gridY}`) ? step : best), null);
+      if (furthestReachableStep) {
+        const goalKey = `${opponent.gridX},${opponent.gridY}`;
+        const dynamicBlocked = blockedSet ? new Set(blockedSet) : null;
+        dynamicBlocked?.delete(goalKey);
+        bestPath = buildGridPath(
+          room,
+          active.gridX,
+          active.gridY,
+          furthestReachableStep.gridX,
+          furthestReachableStep.gridY,
+          reachable,
+          dynamicBlocked,
+        );
+      } else {
+        let fallbackCell = null;
+        let fallbackDistance = Infinity;
+        reachable.forEach((_, key) => {
+          const [gx, gy] = key.split(",").map(Number);
+          if (gx === active.gridX && gy === active.gridY) return;
+          if (blockedSet?.has(key)) return;
+          const path = buildGridPath(room, active.gridX, active.gridY, gx, gy, reachable, blockedSet);
+          if (path.length === 0) return;
+          const distance = Math.abs(opponent.gridX - gx) + Math.abs(opponent.gridY - gy);
+          if (distance < fallbackDistance) {
+            fallbackDistance = distance;
+            fallbackCell = { gridX: gx, gridY: gy };
+          }
+        });
+        if (fallbackCell) bestPath = buildGridPath(room, active.gridX, active.gridY, fallbackCell.gridX, fallbackCell.gridY, reachable, blockedSet);
       }
-    });
+    }
   }
 
-  if (!bestPath) return false;
+  if (!bestPath || bestPath.length === 0) return false;
   state.player.pathQueue = bestPath.map((step) => ({ ...step }));
   return true;
 }
@@ -1200,6 +1231,9 @@ function resolveSquadTurn(state, room) {
 function placePlayer(state, roomId, spawn = null) {
   state.currentRoomId = roomId;
   const room = state.rooms[roomId];
+  if (room.rangeLimited && room.randomizeRangeBudgetOnEnter) {
+    room.rangeBudget = randomInt(room.rangeBudgetMin ?? 3, room.rangeBudgetMax ?? 6);
+  }
   const x = spawn?.x ?? room.world.width / 2;
   const y = spawn?.y ?? room.world.height / 2;
   resetMotionState(state);
