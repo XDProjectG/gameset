@@ -431,7 +431,6 @@ function createSquadBattleNpcAssistRoom() {
     squadCompanionCount: 2,
     squadNpcAllyCount: 3,
     squadEnemyCount: 6,
-    randomizeRangeBudgetOnEnter: true,
     rangeBudgetMin: 3,
     rangeBudgetMax: 6,
     rangeBudget: 4,
@@ -583,6 +582,10 @@ function randomInt(min, max) {
   return lower + Math.floor(Math.random() * (upper - lower + 1));
 }
 
+function randomMoveBudgetForRoom(room) {
+  return randomInt(room.rangeBudgetMin ?? 3, room.rangeBudgetMax ?? 6);
+}
+
 function rectContains(rect, x, y) {
   return x >= rect.x && x <= rect.x + rect.width && y >= rect.y && y <= rect.y + rect.height;
 }
@@ -720,6 +723,7 @@ function createSquadMember(memberId, type, order, room, gridX, gridY) {
     previewPath: [],
     previewTarget: null,
     facingAngle: -Math.PI / 2,
+    moveBudget: room.rangeBudget ?? DEFAULT_TURN_BUDGET,
   };
 }
 
@@ -859,7 +863,8 @@ function resetMotionState(state) {
 }
 
 function resetTurnBudget(state, room = state.rooms[state.currentRoomId]) {
-  state.turn.budget = room?.rangeBudget ?? DEFAULT_TURN_BUDGET;
+  const active = room?.squadRotation ? squadActiveMember(state) : null;
+  state.turn.budget = active?.moveBudget ?? room?.rangeBudget ?? DEFAULT_TURN_BUDGET;
   state.turn.originX = state.player.gridX;
   state.turn.originY = state.player.gridY;
 }
@@ -1045,6 +1050,12 @@ function initializeSquadState(state, room) {
     }
     enemyCells.forEach((cell, index) => {
       members.push({ ...createSquadMember(`enemy-${index + 1}`, "enemy", 0, room, cell.gridX, cell.gridY), team: "enemy", control: "ai" });
+    });
+  }
+
+  if (room.rangeLimited) {
+    members.forEach((member) => {
+      member.moveBudget = randomMoveBudgetForRoom(room);
     });
   }
 
